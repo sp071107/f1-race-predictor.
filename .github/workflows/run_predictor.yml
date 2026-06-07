@@ -1,18 +1,22 @@
 name: Run F1 Predictor Pipeline
 on:
-  workflow_dispatch: # Allows you to press a button to run it manually anytime!
+  workflow_dispatch: 
   schedule:
-    - cron: '0 10 * * 2' # Automatically runs every Tuesday morning permanently
+    - cron: '0 10 * * 2' 
+
+# This explicitly grants the robot write access via code configuration
+permissions:
+  contents: write
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
     - name: Check out repo code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4 # Updated to v4 for Node 24 support
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # Updated to v5 for Node 24 support
       with:
         python-version: '3.10'
 
