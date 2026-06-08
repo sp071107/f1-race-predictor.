@@ -59,7 +59,8 @@ if sched_resp.status_code == 200:
         race_date_str = race.get('date')
         if race_date_str:
             race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
-            target_round = int(race.['round'])
+            # --- TYPO FIXED HERE: removed the rogue dot before ['round'] ---
+            target_round = int(race['round'])
             target_circuit = race['Circuit']['circuitId']
             if race_date >= today:
                 break # Found the active/next race weekend!
@@ -104,14 +105,12 @@ if grid_resp.status_code == 200:
 if not real_grid_found:
     print("Qualifying session data isn't live yet on the API. Simulating baseline track matrix...")
     
-    # Grab a pool of recent top performing driver/constructor strings from the encoder classes
     drivers_list = ['max_verstappen', 'hamilton', 'norris', 'leclerc', 'russell', 'sainz', 'perez', 'piastri', 'alonso', 'stroll', 'albon', 'gasly', 'ocon', 'hulkenberg', 'bottas', 'zhou', 'magnussen', 'tsunoda', 'ricciardo', 'sargeant']
     constructors_list = ['red_bull', 'mercedes', 'mclaren', 'ferrari', 'mercedes', 'ferrari', 'red_bull', 'mclaren', 'aston_martin', 'aston_martin', 'williams', 'alpine', 'alpine', 'haas', 'sauber', 'sauber', 'haas', 'rb', 'rb', 'williams']
     
     circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
     
     for pos in range(1, 21):
-        # Align clean fallback lists or defaults safely
         d_id = drivers_list[pos-1] if pos-1 < len(drivers_list) else 'max_verstappen'
         c_id = constructors_list[pos-1] if pos-1 < len(constructors_list) else 'red_bull'
         
