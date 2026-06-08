@@ -54,16 +54,14 @@ if sched_resp.status_code == 200:
     races_sched = sched_resp.json()['MRData']['RaceTable']['Races']
     today = datetime.utcnow().date()
     
-    # Intelligently find the closest upcoming race or the most recent one
     for race in races_sched:
         race_date_str = race.get('date')
         if race_date_str:
             race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
-            # --- TYPO FIXED HERE: removed the rogue dot before ['round'] ---
             target_round = int(race['round'])
             target_circuit = race['Circuit']['circuitId']
             if race_date >= today:
-                break # Found the active/next race weekend!
+                break 
 
 print(f"Targeting active event: Year {current_year}, Round {target_round}, Circuit: {target_circuit}")
 
@@ -101,12 +99,23 @@ if grid_resp.status_code == 200:
                 "predicted_finish": round(pred[0], 1)
             })
 
-# Fallback block: If the qualifying session isn't live yet, simulate the track grid for known entries
+# Fallback block: If qualifying isn't live, simulate the grid using the correct active rosters
 if not real_grid_found:
     print("Qualifying session data isn't live yet on the API. Simulating baseline track matrix...")
     
-    drivers_list = ['max_verstappen', 'hamilton', 'norris', 'leclerc', 'russell', 'sainz', 'perez', 'piastri', 'alonso', 'stroll', 'albon', 'gasly', 'ocon', 'hulkenberg', 'bottas', 'zhou', 'magnussen', 'tsunoda', 'ricciardo', 'sargeant']
-    constructors_list = ['red_bull', 'mercedes', 'mclaren', 'ferrari', 'mercedes', 'ferrari', 'red_bull', 'mclaren', 'aston_martin', 'aston_martin', 'williams', 'alpine', 'alpine', 'haas', 'sauber', 'sauber', 'haas', 'rb', 'rb', 'williams']
+    # --- UPDATED GRID ROSTER MATRIX ---
+    drivers_list = [
+        'max_verstappen', 'perez', 'hamilton', 'leclerc', 'norris', 
+        'piastri', 'russell', 'antonelli', 'alonso', 'stroll', 
+        'gasly', 'ocon', 'albon', 'sainz', 'hulkenberg', 
+        'bearman', 'tsunoda', 'lawson', 'bottas', 'zhou'
+    ]
+    constructors_list = [
+        'red_bull', 'red_bull', 'ferrari', 'ferrari', 'mclaren', 
+        'mclaren', 'mercedes', 'mercedes', 'aston_martin', 'aston_martin', 
+        'alpine', 'haas', 'williams', 'williams', 'audi', 
+        'haas', 'rb', 'rb', 'sauber', 'sauber'
+    ]
     
     circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
     
@@ -119,10 +128,15 @@ if not real_grid_found:
         
         pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, pos]])
         
+        # Clean up text displays nicely
+        display_driver = d_id.replace('_', ' ').title()
+        display_team = c_id.replace('_', ' ').title()
+        if d_id == 'antonelli': display_driver = "Kimi Antonelli"
+        
         live_predictions.append({
             "grid": pos,
-            "driver": d_id.replace('_', ' ').title(),
-            "team": c_id.replace('_', ' ').title(),
+            "driver": display_driver,
+            "team": display_team,
             "predicted_finish": round(pred[0], 1)
         })
 
