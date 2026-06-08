@@ -6,7 +6,7 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestRegressor
 
-print("Starting UPGRADED F1 Data Pipeline...")
+print("Starting 2026 FIXED Data Pipeline...")
 all_races_data = []
 
 # 1. Fetch historical data (2016-2025) to train our brain
@@ -40,32 +40,31 @@ X = df[['year', 'round', 'circuit_encoded', 'driver_encoded', 'constructor_encod
 y = df['finishing_position']
 ai_brain = RandomForestRegressor(n_estimators=100, random_state=42)
 ai_brain.fit(X, y)
-print("AI Brain trained successfully on historical datasets.")
+print("AI Brain trained successfully.")
 
-# 4. Fetch the CURRENT Grand Prix to find the active weekend round
+# 4. Target the 2026 active schedule
 current_year = 2026
 schedule_url = f"https://api.jolpi.ca/ergast/f1/{current_year}.json"
 sched_resp = requests.get(schedule_url)
 
 target_round = 1
-target_circuit = df['circuit_id'].iloc[-1] 
+target_circuit = "catalunya" # Default fallback to next up if API is transitioning
 
 if sched_resp.status_code == 200:
     races_sched = sched_resp.json()['MRData']['RaceTable']['Races']
     today = datetime.utcnow().date()
-    
     for race in races_sched:
         race_date_str = race.get('date')
         if race_date_str:
             race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
-            target_round = int(race['round'])
-            target_circuit = race['Circuit']['circuitId']
             if race_date >= today:
+                target_round = int(race['round'])
+                target_circuit = race['Circuit']['circuitId']
                 break 
 
 print(f"Targeting active event: Year {current_year}, Round {target_round}, Circuit: {target_circuit}")
 
-# 5. Fetch the REAL qualifying/grid entries for this weekend
+# 5. Fetch live qualifying data if available
 grid_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{target_round}/qualifying.json"
 grid_resp = requests.get(grid_url)
 real_grid_found = False
@@ -85,63 +84,62 @@ if grid_resp.status_code == 200:
             d_name = f"{entry['Driver'].get('givenName', '')} {entry['Driver'].get('familyName', '')}".strip()
             c_name = entry['Constructor'].get('name', '')
             
-            # Handle rookies/unknown values safely
             d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
             c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
             circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
             
             pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, p_grid]])
-            
             live_predictions.append({
-                "grid": p_grid,
-                "driver": d_name,
-                "team": c_name,
-                "predicted_finish": round(pred[0], 1)
+                "grid": p_grid, "driver": d_name, "team": c_name, "predicted_finish": round(pred[0], 1)
             })
 
-# Fallback block: If qualifying isn't live, simulate the grid using the correct active rosters
+# 6. TRUE 2026 MID-WEEK ROSTER FALLBACK
 if not real_grid_found:
-    print("Qualifying session data isn't live yet on the API. Simulating baseline track matrix...")
+    print("Mid-week gap. Simulating baseline track matrix with true 2026 driver pairings...")
     
-    # --- UPDATED GRID ROSTER MATRIX ---
-    drivers_list = [
-        'max_verstappen', 'perez', 'hamilton', 'leclerc', 'norris', 
-        'piastri', 'russell', 'antonelli', 'alonso', 'stroll', 
-        'gasly', 'ocon', 'albon', 'sainz', 'hulkenberg', 
-        'bearman', 'tsunoda', 'lawson', 'bottas', 'zhou'
-    ]
-    constructors_list = [
-        'red_bull', 'red_bull', 'ferrari', 'ferrari', 'mclaren', 
-        'mclaren', 'mercedes', 'mercedes', 'aston_martin', 'aston_martin', 
-        'alpine', 'haas', 'williams', 'williams', 'audi', 
-        'haas', 'rb', 'rb', 'sauber', 'sauber'
+    # 2026 explicit driver alignments 
+    roster_2026 = [
+        {"driver": "George Russell", "d_id": "russell", "team": "Mercedes", "c_id": "mercedes"},
+        {"driver": "Kimi Antonelli", "d_id": "antonelli", "team": "Mercedes", "c_id": "mercedes"},
+        {"driver": "Lewis Hamilton", "d_id": "hamilton", "team": "Ferrari", "c_id": "ferrari"},
+        {"driver": "Charles Leclerc", "d_id": "leclerc", "team": "Ferrari", "c_id": "ferrari"},
+        {"driver": "Max Verstappen", "d_id": "max_verstappen", "team": "Red Bull Racing", "c_id": "red_bull"},
+        {"driver": "Sergio Perez", "d_id": "perez", "team": "Red Bull Racing", "c_id": "red_bull"},
+        {"driver": "Lando Norris", "d_id": "norris", "team": "McLaren", "c_id": "mclaren"},
+        {"driver": "Oscar Piastri", "d_id": "piastri", "team": "McLaren", "c_id": "mclaren"},
+        {"driver": "Fernando Alonso", "d_id": "alonso", "team": "Aston Martin", "c_id": "aston_martin"},
+        {"driver": "Lance Stroll", "d_id": "stroll", "team": "Aston Martin", "c_id": "aston_martin"},
+        {"driver": "Pierre Gasly", "d_id": "gasly", "team": "Alpine", "c_id": "alpine"},
+        {"driver": "Esteban Ocon", "d_id": "ocon", "team": "Haas", "c_id": "haas"},
+        {"driver": "Oliver Bearman", "d_id": "bearman", "team": "Haas", "c_id": "haas"},
+        {"driver": "Alex Albon", "d_id": "albon", "team": "Williams", "c_id": "williams"},
+        {"driver": "Carlos Sainz", "d_id": "sainz", "team": "Williams", "c_id": "williams"},
+        {"driver": "Nico Hulkenberg", "d_id": "hulkenberg", "team": "Audi", "c_id": "audi"},
+        {"driver": "Yuki Tsunoda", "d_id": "tsunoda", "team": "RB", "c_id": "rb"},
+        {"driver": "Liam Lawson", "d_id": "lawson", "team": "RB", "c_id": "rb"},
+        {"driver": "Valtteri Bottas", "d_id": "bottas", "team": "Sauber", "c_id": "sauber"},
+        {"driver": "Zhou Guanyu", "d_id": "zhou", "team": "Sauber", "c_id": "sauber"}
     ]
     
     circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
     
-    for pos in range(1, 21):
-        d_id = drivers_list[pos-1] if pos-1 < len(drivers_list) else 'max_verstappen'
-        c_id = constructors_list[pos-1] if pos-1 < len(constructors_list) else 'red_bull'
+    for pos, entry in enumerate(roster_2026, 1):
+        d_id, c_id = entry["d_id"], entry["c_id"]
         
         d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
         c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
         
         pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, pos]])
         
-        # Clean up text displays nicely
-        display_driver = d_id.replace('_', ' ').title()
-        display_team = c_id.replace('_', ' ').title()
-        if d_id == 'antonelli': display_driver = "Kimi Antonelli"
-        
         live_predictions.append({
             "grid": pos,
-            "driver": display_driver,
-            "team": display_team,
+            "driver": entry["driver"],
+            "team": entry["team"],
             "predicted_finish": round(pred[0], 1)
         })
 
-# 6. Save data to predictions.json
+# Save clean calculations
 with open("predictions.json", "w") as f:
     json.dump(live_predictions, f, indent=4)
 
-print("Upgraded pipeline completed successfully! predictions.json completely customized.")
+print("Pipeline update complete. Mid-week 2026 data arrays mapped successfully.")
