@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import time
 import json
+from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestRegressor
 
@@ -41,21 +42,27 @@ ai_brain = RandomForestRegressor(n_estimators=100, random_state=42)
 ai_brain.fit(X, y)
 print("AI Brain trained successfully on historical datasets.")
 
-# 4. Fetch the CURRENT DYNAMIC WEEKEND schedule
+# 4. Fetch the CURRENT Grand Prix to find the active weekend round
 current_year = 2026
 schedule_url = f"https://api.jolpi.ca/ergast/f1/{current_year}.json"
 sched_resp = requests.get(schedule_url)
 
-# Default fallback values if no current active weekend data is returned
 target_round = 1
 target_circuit = df['circuit_id'].iloc[-1] 
 
 if sched_resp.status_code == 200:
     races_sched = sched_resp.json()['MRData']['RaceTable']['Races']
-    if races_sched:
-        # We target the most recent race round that occurred or is upcoming
-        target_round = int(races_sched[-1]['round'])
-        target_circuit = races_sched[-1]['Circuit']['circuitId']
+    today = datetime.utcnow().date()
+    
+    # Intelligently find the closest upcoming race or the most recent one
+    for race in races_sched:
+        race_date_str = race.get('date')
+        if race_date_str:
+            race_date = datetime.strptime(race_date_str, "%Y-%m-%d").date()
+            target_round = int(race.['round'])
+            target_circuit = race['Circuit']['circuitId']
+            if race_date >= today:
+                break # Found the active/next race weekend!
 
 print(f"Targeting active event: Year {current_year}, Round {target_round}, Circuit: {target_circuit}")
 
@@ -66,10 +73,11 @@ real_grid_found = False
 live_predictions = []
 
 if grid_resp.status_code == 200:
-    race_data = grid_resp.json()['MRData']['RaceTable']['Races']
-    if race_data and 'QualifyingResults' in race_data[0]:
-        qualifying_results = race_data[0]['QualifyingResults']
+    race_table = grid_resp.json()['MRData']['RaceTable']['Races']
+    if race_table and 'QualifyingResults' in race_table[0]:
+        qualifying_results = race_table[0]['QualifyingResults']
         real_grid_found = True
+        print(f"Live qualifying results found for Round {target_round}!")
         
         for entry in qualifying_results:
             p_grid = int(entry['position'])
@@ -78,12 +86,11 @@ if grid_resp.status_code == 200:
             d_name = f"{entry['Driver'].get('givenName', '')} {entry['Driver'].get('familyName', '')}".strip()
             c_name = entry['Constructor'].get('name', '')
             
-            # If our historical encoders have never seen a rookie driver/team, handle seamlessly:
+            # Handle rookies/unknown values safely
             d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
             c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
             circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
             
-            # Feed the exact specific details of this driver-car pairing into the model
             pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, p_grid]])
             
             live_predictions.append({
@@ -93,20 +100,26 @@ if grid_resp.status_code == 200:
                 "predicted_finish": round(pred[0], 1)
             })
 
-# Fallback block: If the API doesn't have qualifying results yet, generate standard lines using recent entries
+# Fallback block: If the qualifying session isn't live yet, simulate the track grid for known entries
 if not real_grid_found:
-    print("Qualifying results not live yet. Using last known structural grid names...")
-    sample_drivers = list(le_driver.classes_[:20])
-    sample_teams = list(le_constructor.classes_[:20])
+    print("Qualifying session data isn't live yet on the API. Simulating baseline track matrix...")
+    
+    # Grab a pool of recent top performing driver/constructor strings from the encoder classes
+    drivers_list = ['max_verstappen', 'hamilton', 'norris', 'leclerc', 'russell', 'sainz', 'perez', 'piastri', 'alonso', 'stroll', 'albon', 'gasly', 'ocon', 'hulkenberg', 'bottas', 'zhou', 'magnussen', 'tsunoda', 'ricciardo', 'sargeant']
+    constructors_list = ['red_bull', 'mercedes', 'mclaren', 'ferrari', 'mercedes', 'ferrari', 'red_bull', 'mclaren', 'aston_martin', 'aston_martin', 'williams', 'alpine', 'alpine', 'haas', 'sauber', 'sauber', 'haas', 'rb', 'rb', 'williams']
+    
     circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
     
     for pos in range(1, 21):
-        d_id = sample_drivers[pos-1]
-        c_id = sample_teams[pos-1]
-        d_enc = le_driver.transform([d_id])[0]
-        c_enc = le_constructor.transform([c_id])[0]
+        # Align clean fallback lists or defaults safely
+        d_id = drivers_list[pos-1] if pos-1 < len(drivers_list) else 'max_verstappen'
+        c_id = constructors_list[pos-1] if pos-1 < len(constructors_list) else 'red_bull'
+        
+        d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
+        c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
         
         pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, pos]])
+        
         live_predictions.append({
             "grid": pos,
             "driver": d_id.replace('_', ' ').title(),
@@ -114,7 +127,7 @@ if not real_grid_found:
             "predicted_finish": round(pred[0], 1)
         })
 
-# 6. Save the data to predictions.json
+# 6. Save data to predictions.json
 with open("predictions.json", "w") as f:
     json.dump(live_predictions, f, indent=4)
 
