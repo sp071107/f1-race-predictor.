@@ -6,11 +6,15 @@ from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestRegressor
 
-print("Starting 2026 FIXED Data Pipeline...")
+print("Starting Dynamic Future-Proof Data Pipeline...")
 all_races_data = []
 
-# 1. Fetch historical data (2016-2025) to train our brain
-for year in range(2016, 2026):
+# Find out what calendar year and race circuit is active right now
+today = datetime.utcnow().date()
+current_year = today.year  # Dynamically detects if it's 2026, 2027, etc.
+
+# 1. Fetch historical data to train our brain (up to the previous year)
+for year in range(2016, current_year):
     url = f"https://api.jolpi.ca/ergast/f1/{year}/results.json?limit=1000"
     response = requests.get(url)
     if response.status_code == 200:
@@ -29,30 +33,43 @@ for year in range(2016, 2026):
 
 df = pd.DataFrame(all_races_data)
 
-# 2. Build the exact encoders we need for conversion
-le_circuit, le_driver, le_constructor = LabelEncoder(), LabelEncoder(), LabelEncoder()
-df['circuit_encoded'] = le_circuit.fit_transform(df['circuit_id'])
-df['driver_encoded'] = le_driver.fit_transform(df['driver_id'])
-df['constructor_encoded'] = le_constructor.fit_transform(df['constructor_id'])
+# 2. Setup Base Label Encoders
+base_circuits = list(df['circuit_id'].unique())
+base_drivers = list(df['driver_id'].unique())
+base_constructors = list(df['constructor_id'].unique())
 
-# 3. Train the machine learning model
+# Always inject your custom 2026 entities so they are safely registered in the AI's math map
+custom_identities_drivers = ['hadjar', 'lindblad', 'antonelli', 'bearman', 'lawson']
+custom_identities_teams = ['cadillac', 'audi', 'rb']
+for d in custom_identities_drivers:
+    if d not in base_drivers: base_drivers.append(d)
+for c in custom_identities_teams:
+    if c not in base_constructors: base_constructors.append(c)
+
+le_circuit = LabelEncoder().fit(base_circuits)
+le_driver = LabelEncoder().fit(base_drivers)
+le_constructor = LabelEncoder().fit(base_constructors)
+
+df['circuit_encoded'] = le_circuit.transform(df['circuit_id'])
+df['driver_encoded'] = le_driver.transform(df['driver_id'])
+df['constructor_encoded'] = le_constructor.transform(df['constructor_id'])
+
+# 3. Train the model
 X = df[['year', 'round', 'circuit_encoded', 'driver_encoded', 'constructor_encoded', 'grid_position']]
 y = df['finishing_position']
 ai_brain = RandomForestRegressor(n_estimators=100, random_state=42)
 ai_brain.fit(X, y)
 print("AI Brain trained successfully.")
 
-# 4. Target the 2026 active schedule
-current_year = 2026
+# 4. Target the active round on the current calendar schedule
 schedule_url = f"https://api.jolpi.ca/ergast/f1/{current_year}.json"
 sched_resp = requests.get(schedule_url)
 
 target_round = 1
-target_circuit = "catalunya" # Default fallback to next up if API is transitioning
+target_circuit = "catalunya"
 
 if sched_resp.status_code == 200:
     races_sched = sched_resp.json()['MRData']['RaceTable']['Races']
-    today = datetime.utcnow().date()
     for race in races_sched:
         race_date_str = race.get('date')
         if race_date_str:
@@ -60,51 +77,27 @@ if sched_resp.status_code == 200:
             if race_date >= today:
                 target_round = int(race['round'])
                 target_circuit = race['Circuit']['circuitId']
-                break 
+                break
 
-print(f"Targeting active event: Year {current_year}, Round {target_round}, Circuit: {target_circuit}")
+print(f"Targeting Layout: Year {current_year}, Round {target_round} at {target_circuit}")
 
-# 5. Fetch live qualifying data if available
-grid_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{target_round}/qualifying.json"
-grid_resp = requests.get(grid_url)
-real_grid_found = False
 live_predictions = []
+circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
 
-if grid_resp.status_code == 200:
-    race_table = grid_resp.json()['MRData']['RaceTable']['Races']
-    if race_table and 'QualifyingResults' in race_table[0]:
-        qualifying_results = race_table[0]['QualifyingResults']
-        real_grid_found = True
-        print(f"Live qualifying results found for Round {target_round}!")
-        
-        for entry in qualifying_results:
-            p_grid = int(entry['position'])
-            d_id = entry['Driver']['driverId']
-            c_id = entry['Constructor']['constructorId']
-            d_name = f"{entry['Driver'].get('givenName', '')} {entry['Driver'].get('familyName', '')}".strip()
-            c_name = entry['Constructor'].get('name', '')
-            
-            d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
-            c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
-            circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
-            
-            pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, p_grid]])
-            live_predictions.append({
-                "grid": p_grid, "driver": d_name, "team": c_name, "predicted_finish": round(pred[0], 1)
-            })
-
-# 6. TRUE 2026 MID-WEEK ROSTER FALLBACK
-if not real_grid_found:
-    print("Mid-week gap. Simulating baseline track matrix with true 2026 driver pairings...")
-    
-    # 2026 explicit driver alignments 
+# 5. HYBRID LOGIC ROUTER: Check if we use custom 2026 mode or automatic future mode
+if current_year == 2026:
+    print("Executing locked custom 2026 grid configuration...")
     roster_2026 = [
+        {"driver": "Max Verstappen", "d_id": "max_verstappen", "team": "Red Bull Racing", "c_id": "red_bull"},
+        {"driver": "Isack Hadjar", "d_id": "hadjar", "team": "Red Bull Racing", "c_id": "red_bull"},
+        {"driver": "Sergio Perez", "d_id": "perez", "team": "Cadillac", "c_id": "cadillac"},
+        {"driver": "Valtteri Bottas", "d_id": "bottas", "team": "Cadillac", "c_id": "cadillac"},
+        {"driver": "Yuki Tsunoda", "d_id": "tsunoda", "team": "Racing Bulls (RB)", "c_id": "rb"},
+        {"driver": "Arvid Lindblad", "d_id": "lindblad", "team": "Racing Bulls (RB)", "c_id": "rb"},
         {"driver": "George Russell", "d_id": "russell", "team": "Mercedes", "c_id": "mercedes"},
         {"driver": "Kimi Antonelli", "d_id": "antonelli", "team": "Mercedes", "c_id": "mercedes"},
         {"driver": "Lewis Hamilton", "d_id": "hamilton", "team": "Ferrari", "c_id": "ferrari"},
         {"driver": "Charles Leclerc", "d_id": "leclerc", "team": "Ferrari", "c_id": "ferrari"},
-        {"driver": "Max Verstappen", "d_id": "max_verstappen", "team": "Red Bull Racing", "c_id": "red_bull"},
-        {"driver": "Sergio Perez", "d_id": "perez", "team": "Red Bull Racing", "c_id": "red_bull"},
         {"driver": "Lando Norris", "d_id": "norris", "team": "McLaren", "c_id": "mclaren"},
         {"driver": "Oscar Piastri", "d_id": "piastri", "team": "McLaren", "c_id": "mclaren"},
         {"driver": "Fernando Alonso", "d_id": "alonso", "team": "Aston Martin", "c_id": "aston_martin"},
@@ -114,32 +107,72 @@ if not real_grid_found:
         {"driver": "Oliver Bearman", "d_id": "bearman", "team": "Haas", "c_id": "haas"},
         {"driver": "Alex Albon", "d_id": "albon", "team": "Williams", "c_id": "williams"},
         {"driver": "Carlos Sainz", "d_id": "sainz", "team": "Williams", "c_id": "williams"},
-        {"driver": "Nico Hulkenberg", "d_id": "hulkenberg", "team": "Audi", "c_id": "audi"},
-        {"driver": "Yuki Tsunoda", "d_id": "tsunoda", "team": "RB", "c_id": "rb"},
-        {"driver": "Liam Lawson", "d_id": "lawson", "team": "RB", "c_id": "rb"},
-        {"driver": "Valtteri Bottas", "d_id": "bottas", "team": "Sauber", "c_id": "sauber"},
-        {"driver": "Zhou Guanyu", "d_id": "zhou", "team": "Sauber", "c_id": "sauber"}
+        {"driver": "Nico Hulkenberg", "d_id": "hulkenberg", "team": "Audi", "c_id": "audi"}
     ]
-    
-    circ_enc = le_circuit.transform([target_circuit])[0] if target_circuit in le_circuit.classes_ else 0
     
     for pos, entry in enumerate(roster_2026, 1):
         d_id, c_id = entry["d_id"], entry["c_id"]
-        
-        d_enc = le_driver.transform([d_id])[0] if d_id in le_driver.classes_ else 0
-        c_enc = le_constructor.transform([c_id])[0] if c_id in le_constructor.classes_ else 0
-        
+        d_enc = le_driver.transform([d_id])[0]
+        c_enc = le_constructor.transform([c_id])[0]
         pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, pos]])
-        
         live_predictions.append({
-            "grid": pos,
-            "driver": entry["driver"],
-            "team": entry["team"],
-            "predicted_finish": round(pred[0], 1)
+            "grid": pos, "driver": entry["driver"], "team": entry["team"], "predicted_finish": round(pred[0], 1)
         })
 
-# Save clean calculations
+else:
+    print(f"Welcome to {current_year}! Activating fully automated live API grid streaming...")
+    grid_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{target_round}/qualifying.json"
+    grid_resp = requests.get(grid_url)
+    
+    # Try to use live qualifying order first, fallback to historical drivers list if mid-week
+    real_grid_found = False
+    if grid_resp.status_code == 200:
+        race_table = grid_resp.json()['MRData']['RaceTable']['Races']
+        if race_table and 'QualifyingResults' in race_table[0]:
+            real_grid_found = True
+            for entry in race_table[0]['QualifyingResults']:
+                p_grid = int(entry['position'])
+                d_id = entry['Driver']['driverId']
+                c_id = entry['Constructor']['constructorId']
+                d_name = f"{entry['Driver'].get('givenName', '')} {entry['Driver'].get('familyName', '')}".strip()
+                c_name = entry['Constructor'].get('name', '')
+                
+                # Dynamic safety encoding for future unknown drivers/teams
+                if d_id not in le_driver.classes_:
+                    le_driver.classes_ = pd.np.append(le_driver.classes_, d_id)
+                if c_id not in le_constructor.classes_:
+                    le_constructor.classes_ = pd.np.append(le_constructor.classes_, c_id)
+                
+                d_enc = le_driver.transform([d_id])[0]
+                c_enc = le_constructor.transform([c_id])[0]
+                pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, p_grid]])
+                live_predictions.append({
+                    "grid": p_grid, "driver": d_name, "team": c_name, "predicted_finish": round(pred[0], 1)
+                })
+                
+    if not real_grid_found:
+        print("Qualifying not live yet for this future event. Pulling active driver database entries...")
+        # Fallback to the official driver standings roster for that active year
+        drivers_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/drivers.json"
+        dr_resp = requests.get(drivers_url)
+        if dr_resp.status_code == 200:
+            d_list = dr_resp.json()['MRData']['DriverTable']['Drivers']
+            for pos, d in enumerate(d_list[:20], 1):
+                d_id = d['driverId']
+                d_name = f"{d.get('givenName', '')} {d.get('familyName', '')}".strip()
+                
+                if d_id not in le_driver.classes_:
+                    le_driver.classes_ = pd.np.append(le_driver.classes_, d_id)
+                
+                d_enc = le_driver.transform([d_id])[0]
+                c_enc = 0 # Default safety mapping
+                pred = ai_brain.predict([[current_year, target_round, circ_enc, d_enc, c_enc, pos]])
+                live_predictions.append({
+                    "grid": pos, "driver": d_name, "team": "Dynamic Entry", "predicted_finish": round(pred[0], 1)
+                })
+
+# 6. Output calculations cleanly to Streamlit interface
 with open("predictions.json", "w") as f:
     json.dump(live_predictions, f, indent=4)
 
-print("Pipeline update complete. Mid-week 2026 data arrays mapped successfully.")
+print(f"Data pipeline complete. Smart-router resolved for {current_year} context.")
