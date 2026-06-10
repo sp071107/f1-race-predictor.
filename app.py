@@ -24,8 +24,18 @@ CIRCUIT_DB = {
     }
 }
 
+# --- EXTENDED DRIVER PROFILE REGISTRY (Weather Masteries) ---
+# Add special traits here if desired, but anyone missing will gracefully fallback!
+DRIVER_TRAITS = {
+    "Max Verstappen": {"wet_mastery": 1.2},
+    "Lewis Hamilton": {"wet_mastery": 1.2},
+    "Fernando Alonso": {"wet_mastery": 1.0},
+    "Franco Colapinto": {"wet_mastery": 0.8},  # Solid wet weather instinct
+    "Gabriel Bortoleto": {"wet_mastery": 0.8}  # Quick adaptability mapping
+}
+
 st.title("🏎️ Formula 1 Race Principal Simulation Console")
-st.caption("Advanced data-driven simulation platform with zero hardcoded driver/team dependencies.")
+st.caption("Advanced data-driven simulation platform featuring zero driver restrictions.")
 st.markdown("---")
 
 try:
@@ -40,7 +50,6 @@ try:
     track = CIRCUIT_DB.get(target_circuit, CIRCUIT_DB["default"])
     
     # ─── DYNAMIC METADATA EXTRACTION ───
-    # We automatically discover who is racing right now from the JSON file!
     unique_teams = sorted(df['team'].unique())
     unique_drivers = sorted(df['driver'].unique())
 
@@ -52,37 +61,31 @@ try:
     weather_state = st.sidebar.selectbox("Track Surface Condition", ["Dry Baseline", "Damp / Greasy", "Heavy Monsoon Wet"])
     track_temp = st.sidebar.slider("Track Temperature (°C)", 15, 60, 35)
 
-    # 2. Dynamic Team Upgrade Modifiers (Injected dynamically)
+    # 2. Dynamic Team Upgrade Modifiers
     st.sidebar.subheader("🛠️ Constructor Development Pace")
-    st.sidebar.caption("Fine-tune aerodynamic and mechanical chassis upgrades:")
     team_modifiers = {}
     for team in unique_teams:
-        # Generate a distinct key and slider for every team found in the data
         team_modifiers[team] = st.sidebar.slider(
             f"{team} Dev Delta", 
             min_value=-2.0, 
             max_value=2.0, 
             value=0.0, 
-            step=0.1,
-            help="Negative numbers lower finishing position index (faster lap pace)."
+            step=0.1
         )
 
-    # 3. Dynamic Driver Momentum Filters (Injected dynamically)
+    # 3. Dynamic Driver Momentum Filters
     st.sidebar.subheader("👤 Driver Form Adjustments")
-    st.sidebar.caption("Adjust real-time focus / hot-streak variables:")
     driver_modifiers = {}
     for driver in unique_drivers:
-        # Generate a dynamic slider for every driver present (Bortoleto, Colapinto, Antonelli, etc.)
         driver_modifiers[driver] = st.sidebar.slider(
             f"{driver} Performance Index", 
             min_value=0.5, 
             max_value=1.5, 
             value=1.0, 
-            step=0.05,
-            help="Lower multipliers compress and optimize simulated race finish vectors."
+            step=0.05
         )
 
-    # --- LIVE MATHEMATICAL MUTATION ARCHITECTURE ---
+    # --- ROBUST MATHEMATICAL MUTATION ARCHITECTURE ---
     def execute_live_simulation(row):
         pred = float(row['predicted_finish'])
         team = row['team']
@@ -96,13 +99,15 @@ try:
         if driver in driver_modifiers:
             pred *= driver_modifiers[driver]
             
-        # Apply Weather Volatility Math
+        # DYNAMIC WEATHER PROFILE SYSTEM (No longer hardcoded!)
+        # Check if driver has specific weather profiles, otherwise assign generic baseline
+        driver_profile = DRIVER_TRAITS.get(driver, {"wet_mastery": 0.5})
+        wet_skill = driver_profile["wet_mastery"]
+
         if weather_state == "Damp / Greasy":
-            if driver in ["Lewis Hamilton", "Max Verstappen", "Fernando Alonso"]:
-                pred -= 0.6
+            pred -= (0.5 * wet_skill)
         elif weather_state == "Heavy Monsoon Wet":
-            if driver in ["Lewis Hamilton", "Max Verstappen"]:
-                pred -= 1.2
+            pred -= (1.0 * wet_skill)
             if track["bias"] == "Aero-Heavy":
                 pred -= 0.4
                 
