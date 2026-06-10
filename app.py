@@ -9,35 +9,33 @@ st.set_page_config(page_title="F1 AI Race Predictor Pro", page_icon="🏎️", l
 CIRCUIT_DB = {
     "catalunya": {
         "name": "Circuit de Barcelona-Catalunya", "bias": "Aero-Heavy", 
-        "sc_prob": "35%", "tyre_wear": "High (Lateral)"
+        "sc_prob": "35%", "tyre_wear": "High (Lateral)", "base_laps": 66
     },
     "monaco": {
         "name": "Circuit de Monaco", "bias": "Mechanical-Grip", 
-        "sc_prob": "80%", "tyre_wear": "Very Low"
+        "sc_prob": "80%", "tyre_wear": "Very Low", "base_laps": 78
     },
     "baku": {
         "name": "Baku City Circuit", "bias": "Top-Speed", 
-        "sc_prob": "90%", "tyre_wear": "Medium"
+        "sc_prob": "90%", "tyre_wear": "Medium", "base_laps": 51
     },
     "default": {
         "name": "Grand Prix Premium Circuit", "bias": "Balanced", 
-        "sc_prob": "45%", "tyre_wear": "Medium"
+        "sc_prob": "45%", "tyre_wear": "Medium", "base_laps": 55
     }
 }
 
 # --- EXTENDED DRIVER PROFILE REGISTRY (Weather Masteries) ---
 DRIVER_TRAITS = {
-    "Max Verstappen": {"wet_mastery": 1.2},
-    "Lewis Hamilton": {"wet_mastery": 1.2},
-    "Fernando Alonso": {"wet_mastery": 1.0},
-    "Franco Colapinto": {"wet_mastery": 0.8},  
-    "Gabriel Bortoleto": {"wet_mastery": 0.8},
-    "Kimi Antonelli": {"wet_mastery": 0.9}
+    "Max Verstappen": {"wet_mastery": 1.2, "tire_management": "Elite"},
+    "Lewis Hamilton": {"wet_mastery": 1.2, "tire_management": "Elite"},
+    "Fernando Alonso": {"wet_mastery": 1.0, "tire_management": "High"},
+    "Franco Colapinto": {"wet_mastery": 0.8, "tire_management": "Standard"},  
+    "Gabriel Bortoleto": {"wet_mastery": 0.8, "tire_management": "Standard"},
+    "Kimi Antonelli": {"wet_mastery": 0.9, "tire_management": "High"}
 }
 
 # --- AUTOMATIC DATA COMPILATION LAYER ---
-# Directly injects the missing drivers and their correct team configurations 
-# into the runtime state if the baseline JSON file is incomplete.
 DEFAULT_PREDICTIONS = [
     {"grid": 1, "driver": "Kimi Antonelli", "team": "Mercedes", "predicted_finish": 1.2, "circuit": "catalunya"},
     {"grid": 2, "driver": "Max Verstappen", "team": "Red Bull Racing", "predicted_finish": 2.0, "circuit": "catalunya"},
@@ -65,7 +63,6 @@ st.caption("Advanced dynamic telemetry simulation platform with built-in 2026 dr
 st.markdown("---")
 
 try:
-    # Attempt to load baseline data, fallback to compiled list if missing or empty
     if os.path.exists("predictions.json") and os.path.getsize("predictions.json") > 0:
         with open("predictions.json", "r") as f:
             raw_data = json.load(f)
@@ -74,14 +71,12 @@ try:
         
     df = pd.DataFrame(raw_data)
     
-    # Verify that Franco and Gabriel are hard-coded into the runtime data frame if missing
     existing_drivers = df['driver'].tolist()
     if "Franco Colapinto" not in existing_drivers:
         df = pd.concat([df, pd.DataFrame([{"grid": 9, "driver": "Franco Colapinto", "team": "Alpine", "predicted_finish": 7.1, "circuit": "catalunya"}])], ignore_index=True)
     if "Gabriel Bortoleto" not in existing_drivers:
         df = pd.concat([df, pd.DataFrame([{"grid": 11, "driver": "Gabriel Bortoleto", "team": "Audi", "predicted_finish": 8.4, "circuit": "catalunya"}])], ignore_index=True)
 
-    # Unique metadata parsing for UI controls
     unique_teams = sorted(df['team'].unique())
     unique_drivers = sorted(df['driver'].unique())
 
@@ -93,29 +88,22 @@ try:
     weather_state = st.sidebar.selectbox("Track Surface Condition", ["Dry Baseline", "Damp / Greasy", "Heavy Monsoon Wet"])
     track_temp = st.sidebar.slider("Track Temperature (°C)", 15, 60, 35)
 
+    # NEW FEATURE CONTROL: Fuel & Battery Strategy
+    st.sidebar.subheader("🔋 Energy & Weight Architecture")
+    fuel_load = st.sidebar.slider("Initial Fuel Target (kg)", 95, 110, 100)
+    ers_mode = st.sidebar.selectbox("ERS Deployment Curve", ["Balanced Harvest", "Overtake Mode Peak", "Battery Conserve"])
+
     # 2. Dynamic Team Upgrade Modifiers
     st.sidebar.subheader("🛠️ Constructor Development Pace")
     team_modifiers = {}
     for team in unique_teams:
-        team_modifiers[team] = st.sidebar.slider(
-            f"{team} Dev Delta", 
-            min_value=-2.0, 
-            max_value=2.0, 
-            value=0.0, 
-            step=0.1
-        )
+        team_modifiers[team] = st.sidebar.slider(f"{team} Dev Delta", -2.0, 2.0, 0.0, step=0.1)
 
     # 3. Dynamic Driver Momentum Filters
     st.sidebar.subheader("👤 Driver Form Adjustments")
     driver_modifiers = {}
     for driver in unique_drivers:
-        driver_modifiers[driver] = st.sidebar.slider(
-            f"{driver} Performance Index", 
-            min_value=0.5, 
-            max_value=1.5, 
-            value=1.0, 
-            step=0.05
-        )
+        driver_modifiers[driver] = st.sidebar.slider(f"{driver} Performance Index", 0.5, 1.5, 1.0, step=0.05)
 
     # --- MATHEMATICAL COMPUTE MATRIX ---
     def execute_live_simulation(row):
@@ -129,6 +117,17 @@ try:
         if driver in driver_modifiers:
             pred *= driver_modifiers[driver]
             
+        # Incorporate fuel load and ERS parameters into math
+        if fuel_load > 105:  # Heavy car penalty early in stint
+            pred += 0.4
+        elif fuel_load < 98: # Aggressive underfuel weight advantage
+            pred -= 0.3
+
+        if ers_mode == "Overtake Mode Peak":
+            pred -= 0.5
+        elif ers_mode == "Battery Conserve":
+            pred += 0.6
+
         driver_profile = DRIVER_TRAITS.get(driver, {"wet_mastery": 0.5})
         wet_skill = driver_profile["wet_mastery"]
 
@@ -144,13 +143,13 @@ try:
     # Re-compute standings
     df['ML Predicted Finish'] = df.apply(execute_live_simulation, axis=1)
     df = df.sort_values(by="ML Predicted Finish").reset_index(drop=True)
-    
     df['Net Positions Change'] = df['grid'] - df['ML Predicted Finish']
+    
     winner = df.iloc[0]
     podium = df.iloc[1:3]
     top_charger = df.sort_values(by="Net Positions Change", ascending=False).iloc[0]
 
-    # --- UI RENDER LAYOUT ---
+    # --- TRACK PROFILE CARD ---
     track_key = raw_data[0].get("circuit", "catalunya") if raw_data else "catalunya"
     track = CIRCUIT_DB.get(track_key, CIRCUIT_DB["default"])
     
@@ -159,11 +158,10 @@ try:
         m1.metric("Track Focus Bias", track["bias"])
         m2.metric("Safety Car Probability", track["sc_prob"])
         m3.metric("Tire Wear Degradation", track["tyre_wear"])
-        m4.metric("Current Track Surface Temp", f"{track_temp}°C")
+        m4.metric("Scheduled Distance", f"{track['base_laps']} Laps")
 
     st.subheader("📊 Live Predictive Strategy Insights")
     h1, h2, h3 = st.columns(3)
-    
     with h1:
         st.error(f"🏆 PROJECTED WINNER\n\n**{winner['driver']}**\n\n*Team: {winner['team']} | Expected Finish: P{winner['ML Predicted Finish']:.1f}*")
     with h2:
@@ -176,16 +174,42 @@ try:
 
     st.markdown("---")
 
-    st.subheader("🏁 Live Computed Simulation Standings")
-    render_table = df[['grid', 'driver', 'team', 'ML Predicted Finish', 'Net Positions Change']].copy()
-    render_table.columns = ['Grid Start', 'Driver Lineup', 'Constructor / Team', 'ML Predicted Finish Index', 'Projected Position Net Delta']
-    
-    st.dataframe(
-        render_table.style.background_gradient(cmap="coolwarm", subset=['ML Predicted Finish Index'])
-        .format({"ML Predicted Finish Index": "{:.1f}", "Projected Position Net Delta": "{:+.1f}", "Grid Start": "{:d}"}),
-        hide_index=True,
-        use_container_width=True
-    )
+    # --- NEW FEATURE: TABBED WORKSPACE ECOSYSTEM ---
+    tab1, tab2 = st.tabs(["🏁 Simulation Standings", "📊 Advanced Telemetry Analytics"])
+
+    with tab1:
+        st.subheader("Live Computed Field Standings")
+        render_table = df[['grid', 'driver', 'team', 'ML Predicted Finish', 'Net Positions Change']].copy()
+        render_table.columns = ['Grid Start', 'Driver Lineup', 'Constructor / Team', 'ML Predicted Finish Index', 'Projected Position Net Delta']
+        
+        st.dataframe(
+            render_table.style.background_gradient(cmap="coolwarm", subset=['ML Predicted Finish Index'])
+            .format({"ML Predicted Finish Index": "{:.1f}", "Projected Position Net Delta": "{:+.1f}", "Grid Start": "{:d}"}),
+            hide_index=True,
+            use_container_width=True
+        )
+
+    with tab2:
+        st.subheader("Stint Degradation & Telemetry Projections")
+        st.write("Calculated dynamic wear rates based on active compound configurations and mechanical parameters:")
+        
+        # Build out highly custom telemetry profiles for the fields on the fly
+        telemetry_records = []
+        for _, row in df.iterrows():
+            d_profile = DRIVER_TRAITS.get(row['driver'], {"tire_management": "Standard"})
+            # Simulating mathematical metrics mapping fuel consumption rates
+            avg_fuel_burn = round((fuel_load / track['base_laps']) + 0.05, 2)
+            est_battery_efficiency = "94.2%" if ers_mode == "Balanced Harvest" else ("81.5%" if ers_mode == "Overtake Mode Peak" else "98.9%")
+            
+            telemetry_records.append({
+                "Driver": row['driver'],
+                "Team": row['team'],
+                "Tire Management Skill Profile": d_profile["tire_management"],
+                "Est. Fuel Burn (kg/lap)": avg_fuel_burn,
+                "ERS Harvest Efficiency": est_battery_efficiency
+            })
+            
+        st.table(pd.DataFrame(telemetry_records))
     
 except Exception as e:
     st.error(f"Execution Error: {str(e)}")
