@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import pandas as pd
+import os
 
 st.set_page_config(page_title="F1 AI Race Predictor Pro", page_icon="🏎️", layout="wide")
 
@@ -25,31 +26,62 @@ CIRCUIT_DB = {
 }
 
 # --- EXTENDED DRIVER PROFILE REGISTRY (Weather Masteries) ---
-# Add special traits here if desired, but anyone missing will gracefully fallback!
 DRIVER_TRAITS = {
     "Max Verstappen": {"wet_mastery": 1.2},
     "Lewis Hamilton": {"wet_mastery": 1.2},
     "Fernando Alonso": {"wet_mastery": 1.0},
-    "Franco Colapinto": {"wet_mastery": 0.8},  # Solid wet weather instinct
-    "Gabriel Bortoleto": {"wet_mastery": 0.8}  # Quick adaptability mapping
+    "Franco Colapinto": {"wet_mastery": 0.8},  
+    "Gabriel Bortoleto": {"wet_mastery": 0.8},
+    "Kimi Antonelli": {"wet_mastery": 0.9}
 }
 
+# --- AUTOMATIC DATA COMPILATION LAYER ---
+# Directly injects the missing drivers and their correct team configurations 
+# into the runtime state if the baseline JSON file is incomplete.
+DEFAULT_PREDICTIONS = [
+    {"grid": 1, "driver": "Kimi Antonelli", "team": "Mercedes", "predicted_finish": 1.2, "circuit": "catalunya"},
+    {"grid": 2, "driver": "Max Verstappen", "team": "Red Bull Racing", "predicted_finish": 2.0, "circuit": "catalunya"},
+    {"grid": 3, "driver": "Lando Norris", "team": "McLaren", "predicted_finish": 2.5, "circuit": "catalunya"},
+    {"grid": 4, "driver": "Charles Leclerc", "team": "Ferrari", "predicted_finish": 3.1, "circuit": "catalunya"},
+    {"grid": 5, "driver": "Oscar Piastri", "team": "McLaren", "predicted_finish": 4.0, "circuit": "catalunya"},
+    {"grid": 6, "driver": "Lewis Hamilton", "team": "Ferrari", "predicted_finish": 4.8, "circuit": "catalunya"},
+    {"grid": 7, "driver": "George Russell", "team": "Mercedes", "predicted_finish": 5.2, "circuit": "catalunya"},
+    {"grid": 8, "driver": "Carlos Sainz", "team": "Williams", "predicted_finish": 6.5, "circuit": "catalunya"},
+    {"grid": 9, "driver": "Franco Colapinto", "team": "Alpine", "predicted_finish": 7.1, "circuit": "catalunya"},
+    {"grid": 10, "driver": "Pierre Gasly", "team": "Alpine", "predicted_finish": 7.8, "circuit": "catalunya"},
+    {"grid": 11, "driver": "Gabriel Bortoleto", "team": "Audi", "predicted_finish": 8.4, "circuit": "catalunya"},
+    {"grid": 12, "driver": "Nico Hülkenberg", "team": "Audi", "predicted_finish": 8.9, "circuit": "catalunya"},
+    {"grid": 13, "driver": "Alexander Albon", "team": "Williams", "predicted_finish": 9.5, "circuit": "catalunya"},
+    {"grid": 14, "driver": "Yuki Tsunoda", "team": "RB", "predicted_finish": 10.2, "circuit": "catalunya"},
+    {"grid": 15, "driver": "Liam Lawson", "team": "RB", "predicted_finish": 11.0, "circuit": "catalunya"},
+    {"grid": 16, "driver": "Lance Stroll", "team": "Aston Martin", "predicted_finish": 12.1, "circuit": "catalunya"},
+    {"grid": 17, "driver": "Fernando Alonso", "team": "Aston Martin", "predicted_finish": 12.5, "circuit": "catalunya"},
+    {"grid": 18, "driver": "Oliver Bearman", "team": "Haas", "predicted_finish": 13.8, "circuit": "catalunya"},
+    {"grid": 19, "driver": "Esteban Ocon", "team": "Haas", "predicted_finish": 14.2, "circuit": "catalunya"}
+]
+
 st.title("🏎️ Formula 1 Race Principal Simulation Console")
-st.caption("Advanced data-driven simulation platform featuring zero driver restrictions.")
+st.caption("Advanced dynamic telemetry simulation platform with built-in 2026 driver grid layouts.")
 st.markdown("---")
 
 try:
-    # --- LOAD BASELINE DATA ---
-    with open("predictions.json", "r") as f:
-        raw_data = json.load(f)
+    # Attempt to load baseline data, fallback to compiled list if missing or empty
+    if os.path.exists("predictions.json") and os.path.getsize("predictions.json") > 0:
+        with open("predictions.json", "r") as f:
+            raw_data = json.load(f)
+    else:
+        raw_data = DEFAULT_PREDICTIONS
         
     df = pd.DataFrame(raw_data)
     
-    # Safely extract target circuit configurations
-    target_circuit = raw_data[0].get("circuit", "catalunya") if raw_data else "catalunya"
-    track = CIRCUIT_DB.get(target_circuit, CIRCUIT_DB["default"])
-    
-    # ─── DYNAMIC METADATA EXTRACTION ───
+    # Verify that Franco and Gabriel are hard-coded into the runtime data frame if missing
+    existing_drivers = df['driver'].tolist()
+    if "Franco Colapinto" not in existing_drivers:
+        df = pd.concat([df, pd.DataFrame([{"grid": 9, "driver": "Franco Colapinto", "team": "Alpine", "predicted_finish": 7.1, "circuit": "catalunya"}])], ignore_index=True)
+    if "Gabriel Bortoleto" not in existing_drivers:
+        df = pd.concat([df, pd.DataFrame([{"grid": 11, "driver": "Gabriel Bortoleto", "team": "Audi", "predicted_finish": 8.4, "circuit": "catalunya"}])], ignore_index=True)
+
+    # Unique metadata parsing for UI controls
     unique_teams = sorted(df['team'].unique())
     unique_drivers = sorted(df['driver'].unique())
 
@@ -85,22 +117,18 @@ try:
             step=0.05
         )
 
-    # --- ROBUST MATHEMATICAL MUTATION ARCHITECTURE ---
+    # --- MATHEMATICAL COMPUTE MATRIX ---
     def execute_live_simulation(row):
         pred = float(row['predicted_finish'])
         team = row['team']
         driver = row['driver']
         
-        # Apply extracted team delta upgrades
         if team in team_modifiers:
             pred += team_modifiers[team]
             
-        # Apply extracted individual driver hot streaks
         if driver in driver_modifiers:
             pred *= driver_modifiers[driver]
             
-        # DYNAMIC WEATHER PROFILE SYSTEM (No longer hardcoded!)
-        # Check if driver has specific weather profiles, otherwise assign generic baseline
         driver_profile = DRIVER_TRAITS.get(driver, {"wet_mastery": 0.5})
         wet_skill = driver_profile["wet_mastery"]
 
@@ -108,23 +136,24 @@ try:
             pred -= (0.5 * wet_skill)
         elif weather_state == "Heavy Monsoon Wet":
             pred -= (1.0 * wet_skill)
-            if track["bias"] == "Aero-Heavy":
+            if "catalunya" in row.get("circuit", "catalunya") and CIRCUIT_DB["catalunya"]["bias"] == "Aero-Heavy":
                 pred -= 0.4
                 
-        # Clamp bounds strictly between P1 and P20
         return max(1.0, min(20.0, pred))
 
-    # Re-compute standings matrix instantly on interactive changes
+    # Re-compute standings
     df['ML Predicted Finish'] = df.apply(execute_live_simulation, axis=1)
     df = df.sort_values(by="ML Predicted Finish").reset_index(drop=True)
     
-    # Calculate Live Visual Statistics
     df['Net Positions Change'] = df['grid'] - df['ML Predicted Finish']
     winner = df.iloc[0]
     podium = df.iloc[1:3]
     top_charger = df.sort_values(by="Net Positions Change", ascending=False).iloc[0]
 
-    # --- UI COMPONENT 1: TRACK PROFILE ---
+    # --- UI RENDER LAYOUT ---
+    track_key = raw_data[0].get("circuit", "catalunya") if raw_data else "catalunya"
+    track = CIRCUIT_DB.get(track_key, CIRCUIT_DB["default"])
+    
     with st.expander(f"🏟️ LIVE TRACK INTELLIGENCE PROFILE: {track['name'].upper()}", expanded=True):
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Track Focus Bias", track["bias"])
@@ -132,7 +161,6 @@ try:
         m3.metric("Tire Wear Degradation", track["tyre_wear"])
         m4.metric("Current Track Surface Temp", f"{track_temp}°C")
 
-    # --- UI COMPONENT 2: STRATEGIC HEADLINE HIGHLIGHTS ---
     st.subheader("📊 Live Predictive Strategy Insights")
     h1, h2, h3 = st.columns(3)
     
@@ -144,13 +172,11 @@ try:
         if top_charger['Net Positions Change'] > 0.4:
             st.success(f"🚀 AI CHOSEN FIELD OVERTAKER\n\n**{top_charger['driver']}**\n\n*Starting P{int(top_charger['grid'])} → Finishing P{top_charger['ML Predicted Finish']:.1f}*")
         else:
-            st.info("🔒 COMBAT LOCK PREDICTED\n\nMinimal overtaking delta expected based on current dynamic tracking weights.")
+            st.info("🔒 COMBAT LOCK PREDICTED\n\nMl metrics indicate linear track profiles with low overtake frequency.")
 
     st.markdown("---")
 
-    # --- UI COMPONENT 3: INTERACTIVE LEADERBOARD MATRIX ---
     st.subheader("🏁 Live Computed Simulation Standings")
-    
     render_table = df[['grid', 'driver', 'team', 'ML Predicted Finish', 'Net Positions Change']].copy()
     render_table.columns = ['Grid Start', 'Driver Lineup', 'Constructor / Team', 'ML Predicted Finish Index', 'Projected Position Net Delta']
     
@@ -161,5 +187,5 @@ try:
         use_container_width=True
     )
     
-except FileNotFoundError:
-    st.error("Simulation architecture halted. Ensure predictions.json file path is compiled and available.")
+except Exception as e:
+    st.error(f"Execution Error: {str(e)}")
