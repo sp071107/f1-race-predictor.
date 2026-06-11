@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import pandas as pd
+import numpy as np
 import os
 
 st.set_page_config(page_title="F1 AI Race Predictor Pro", page_icon="🏎️", layout="wide")
@@ -29,14 +30,13 @@ CIRCUIT_DB = {
     }
 }
 
-# --- EXTENDED DRIVER SKILL VECTOR DATABASE ---
 DRIVER_TRAITS = {
     "Max Verstappen": {"wet_mastery": 1.25, "tire_management": 1.20, "traffic_combat": 1.15, "street_bias": 1.00},
     "Lewis Hamilton": {"wet_mastery": 1.20, "tire_management": 1.15, "traffic_combat": 1.10, "street_bias": 1.05},
     "Fernando Alonso": {"wet_mastery": 1.15, "tire_management": 1.25, "traffic_combat": 1.20, "street_bias": 1.15},
     "Franco Colapinto": {"wet_mastery": 0.85, "tire_management": 0.95, "traffic_combat": 1.05, "street_bias": 1.10},  
     "Gabriel Bortoleto": {"wet_mastery": 0.90, "tire_management": 1.00, "traffic_combat": 1.00, "street_bias": 1.00},
-    "Kimi Antonelli": {"wet_mastery": 1.30, "tire_management": 1.15, "traffic_combat": 1.10, "street_bias": 1.10} # Buffed to reflect actual race pace dominance
+    "Kimi Antonelli": {"wet_mastery": 1.35, "tire_management": 1.20, "traffic_combat": 1.10, "street_bias": 1.10} 
 }
 
 DEFAULT_PREDICTIONS = [
@@ -62,7 +62,7 @@ DEFAULT_PREDICTIONS = [
 ]
 
 st.title("🏎️ Formula 1 Race Principal Simulation Console")
-st.caption("Relative Pace Matrix Engine — High-Accuracy Zero-Sum Grid Resolution")
+st.caption("Exponential Field Delta Matrix & Visual Strategy Predictor Engine")
 st.markdown("---")
 
 try:
@@ -73,46 +73,64 @@ try:
         raw_data = DEFAULT_PREDICTIONS
         
     df = pd.DataFrame(raw_data)
-    
-    existing_drivers = df['driver'].tolist()
-    if "Franco Colapinto" not in existing_drivers:
-        df = pd.concat([df, pd.DataFrame([{"grid": 9, "driver": "Franco Colapinto", "team": "Alpine", "predicted_finish": 7.1, "circuit": "catalunya"}])], ignore_index=True)
-    if "Gabriel Bortoleto" not in existing_drivers:
-        df = pd.concat([df, pd.DataFrame([{"grid": 11, "driver": "Gabriel Bortoleto", "team": "Audi", "predicted_finish": 8.4, "circuit": "catalunya"}])], ignore_index=True)
-
     unique_teams = sorted(df['team'].unique())
     unique_drivers = sorted(df['driver'].unique())
 
-    # --- SIDEBAR CONTROL CENTER ---
-    st.sidebar.header("🕹️ Strategy Control Unit")
-    
-    st.sidebar.subheader("🌦️ Race Climate Engine")
-    weather_state = st.sidebar.selectbox("Track Surface Condition", ["Dry Baseline", "Damp / Greasy", "Heavy Monsoon Wet"])
-    track_temp = st.sidebar.slider("Track Temperature (°C)", 15, 60, 35)
+    # Helper function to turn abstract math values into plain-English tactical labels
+    def get_modifier_label(val):
+        if val < -0.3: return f"{val:+.2f}s (🚀 Massive Upgrade)"
+        if val < 0: return f"{val:+.2f}s (📈 Minor Advantage)"
+        if val > 0.3: return f"{val:+.2f}s (🐌 Severe Penalty)"
+        if val > 0: return f"{val:+.2f}s (📉 Slight Deficit)"
+        return "0.00s (Baseline Standard)"
 
-    st.sidebar.subheader("🔋 Energy & Weight Architecture")
-    fuel_load = st.sidebar.slider("Initial Fuel Target (kg)", 95, 110, 100)
-    ers_mode = st.sidebar.selectbox("ERS Deployment Curve", ["Balanced Harvest", "Overtake Mode Peak", "Battery Conserve"])
+    # --- MAIN SCREEN INTERACTIVE COMMAND PIT (FORMERLY SIDEBAR) ---
+    st.header("🕹️ Grand Prix Strategy & Setup Terminal")
+    st.caption("Adjust environmental conditions or team packages below to recalculate race scenarios live.")
 
-    # UI Sliders are now explicitly labeled for performance gains (+) or losses (-)
-    st.sidebar.subheader("🛠️ Constructor Performance Upgrades")
+    # Main Environment Rows
+    env_col1, env_col2, env_col3 = st.columns(3)
+    with env_col1:
+        weather_state = st.selectbox("Track Surface Condition", ["Dry Baseline", "Damp / Greasy", "Heavy Monsoon Wet"])
+    with env_col2:
+        track_temp = st.slider("Track Temperature (°C)", 15, 60, 35)
+    with env_col3:
+        fuel_load = st.slider("Initial Fuel Target (kg)", 95, 110, 100)
+        
+    ers_mode = st.radio("ERS Powertrain Deployment Curve", ["Balanced Harvest", "Overtake Mode Peak", "Battery Conserve"], horizontal=True)
+
+    # Collapsible Upgrades Section to clean up page layout
     team_modifiers = {}
-    for team in unique_teams:
-        team_modifiers[team] = st.sidebar.slider(f"{team} Pace Shift (s)", -1.0, 1.0, 0.0, step=0.05, help="Negative values reduce lap time (Faster)")
-
-    st.sidebar.subheader("👤 Driver Form Adjustments")
     driver_modifiers = {}
-    for driver in unique_drivers:
-        driver_modifiers[driver] = st.sidebar.slider(f"{driver} Form Shift (s)", -0.5, 0.5, 0.0, step=0.05, help="Negative values reduce lap time (Faster)")
 
-    # --- ZERO-SUM MATHEMATICAL PACE SIMULATION ---
+    with st.expander("🛠️ CONSTRUCTOR GARAGE: Develop Team Car Upgrades"):
+        st.caption("Move slider left (-) to bolt on faster upgrades, or right (+) to apply performance handicaps.")
+        # Render sliders inside clean 2-column configurations
+        team_cols = st.columns(2)
+        for idx, team in enumerate(unique_teams):
+            col_target = team_cols[idx % 2]
+            with col_target:
+                raw_team_val = st.slider(f"{team} Performance Core Adjust", -1.0, 1.0, 0.0, step=0.05, key=f"team_{team}")
+                team_modifiers[team] = raw_team_val
+                st.markdown(f"**Current Delta:** `{get_modifier_label(raw_team_val)}`")
+
+    with st.expander("👤 DRIVER COCKPIT: Form and Driver Focus Controls"):
+        st.caption("Modify real-time mental focus, weekend form, or physical pace variance adjustments.")
+        driver_cols = st.columns(3)
+        for idx, driver in enumerate(unique_drivers):
+            col_target = driver_cols[idx % 3]
+            with col_target:
+                raw_driver_val = st.slider(f"{driver} Form Rating", -0.5, 0.5, 0.0, step=0.05, key=f"driver_{driver}")
+                driver_modifiers[driver] = raw_driver_val
+                st.markdown(f"**Form Feedback:** `{get_modifier_label(raw_driver_val)}`")
+
+    # --- SIMULATION CORE MATHEMATICS ---
     track_key = raw_data[0].get("circuit", "catalunya") if raw_data else "catalunya"
     track = CIRCUIT_DB.get(track_key, CIRCUIT_DB["default"])
 
     def calculate_lap_pace_delta(row):
-        # FIX 1: Map the baseline ML position to a wider, realistic lap time gap structure
-        # A predicted finish of P1.2 gives an initial pace advantage over lower grid entries
-        base_pace = (float(row['predicted_finish']) - 1.0) * 0.45 
+        raw_rank_val = float(row['predicted_finish'])
+        base_pace = np.log1p(raw_rank_val - 1.0) * 0.75 
         
         team = row['team']
         driver = row['driver']
@@ -120,59 +138,49 @@ try:
         
         traits = DRIVER_TRAITS.get(driver, {"wet_mastery": 1.0, "tire_management": 1.0, "traffic_combat": 1.0, "street_bias": 1.0})
         
-        # FIX 2: Sliders are added directly. User subtracts seconds to go faster or adds to go slower.
         if team in team_modifiers:
             base_pace += team_modifiers[team]
         if driver in driver_modifiers:
             base_pace += driver_modifiers[driver]
 
-        # 2. Track Temperature Interactions
         temp_delta = track_temp - 35
         if temp_delta > 0:
             base_pace += (temp_delta * track["thermal_sensitivity"]) / traits["tire_management"]
         else:
             base_pace += (abs(temp_delta) * 0.015) * (2.0 - traits["tire_management"])
 
-        # 3. Fuel Mass Dynamics
         fuel_delta = fuel_load - 100
         base_pace += (fuel_delta * track["fuel_penalty_per_kg"])
 
-        # 4. Energy Deployment Logic (Faster drivers utilize deployment more effectively)
         if ers_mode == "Overtake Mode Peak":
-            base_pace -= 0.35 * traits["traffic_combat"]
+            base_pace -= 0.40 * traits["traffic_combat"]
         elif ers_mode == "Battery Conserve":
-            base_pace += 0.45 * (1.5 - traits["tire_management"])
+            base_pace += 0.55 * (1.5 - traits["tire_management"])
 
-        # 5. Dynamic Climate Physics
         if weather_state == "Damp / Greasy":
-            base_pace += 2.0 * (1.5 - traits["wet_mastery"])
+            base_pace += 2.5 * (1.5 - traits["wet_mastery"])
         elif weather_state == "Heavy Monsoon Wet":
-            base_pace += 5.0 * (2.0 - traits["wet_mastery"])
-            if track["bias"] == "Aero-Heavy":
-                base_pace -= 0.3
+            base_pace += 6.0 * (2.0 - traits["wet_mastery"])
 
-        # 6. Non-Linear Grid Traffic Penalty
         if grid > 1:
-            traffic_penalty = ((grid - 1) * 0.08) * track["overtake_difficulty"] / traits["traffic_combat"]
+            traffic_penalty = (np.power(grid - 1, 1.25) * 0.09) * (track["overtake_difficulty"] / traits["traffic_combat"])
             base_pace += traffic_penalty
 
         return base_pace
 
-    # Apply corrected calculations
+    # Apply core math processing
     df['Lap Pace Delta (s)'] = df.apply(calculate_lap_pace_delta, axis=1)
-    
-    # Sort strictly by lap times (Lowest lap time delta = Fastest)
     df = df.sort_values(by='Lap Pace Delta (s)').reset_index(drop=True)
     df['ML Predicted Finish'] = df.index + 1  
-    
     df['Net Positions Change'] = df['grid'] - df['ML Predicted Finish']
     
     winner = df.iloc[0]
     podium = df.iloc[1:3]
     top_charger = df.sort_values(by="Net Positions Change", ascending=False).iloc[0]
 
-    # --- MAIN INTERACTIVE DISPLAY PANEL ---
-    with st.expander(f"🏟️ LIVE CIRCUIT DESIGN SPECS: {track['name'].upper()}", expanded=True):
+    # --- OUTPUT & PRESENTATION PANEL ---
+    st.markdown("---")
+    with st.expander(f"🏟️ LIVE CIRCUIT DESIGN SPECS: {track['name'].upper()}", expanded=False):
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Track Characteristic", track["bias"])
         m2.metric("Base Benchmark Laptime", f"{track['base_lap_time']:.1f}s")
@@ -189,12 +197,9 @@ try:
         if top_charger['Net Positions Change'] > 0:
             st.success(f"🚀 AI CHOSEN FIELD OVERTAKER\n\n**{top_charger['driver']}**\n\n*Starting P{int(top_charger['grid'])} → Finishing P{int(top_charger['ML Predicted Finish'])} (+{int(top_charger['Net Positions Change'])} Positions)*")
         else:
-            st.info("🔒 COMBAT LOCK PREDICTED\n\nNo driver has found enough tactical delta to execute high field verticality.")
+            st.info("🔒 COMBAT LOCK PREDICTED\n\nField positions stabilizing down sector chains.")
 
-    st.markdown("---")
-
-    # --- TABBED WORKSPACE ECOSYSTEM ---
-    tab1, tab2 = st.tabs(["🏁 Simulation Standings", "📊 Advanced Telemetry Analytics"])
+    tab1, tab2 = st.tabs(["🏁 Simulation Standings", "📊 Visual Strategy & Race Gaps"])
 
     with tab1:
         st.subheader("Live Computed Field Standings")
@@ -209,25 +214,42 @@ try:
         )
 
     with tab2:
-        st.subheader("Stint Degradation & Telemetry Projections")
+        st.subheader("⏱️ Race Deficit to Leader (Total Grand Prix Gap)")
+        st.caption("This chart displays exactly how many seconds behind the race leader each driver is projected to cross the finish line.")
         
-        telemetry_records = []
+        leader_total_time = (track['base_lap_time'] + df.iloc[0]['Lap Pace Delta (s)']) * track['base_laps']
+        
+        chart_data = []
         for idx, row in df.iterrows():
-            d_profile = DRIVER_TRAITS.get(row['driver'], {"wet_mastery": 1.0, "tire_management": 1.0})
-            simulated_total_time = (track['base_lap_time'] + row['Lap Pace Delta (s)']) * track['base_laps']
-            hours = int(simulated_total_time // 3600)
-            minutes = int((simulated_total_time % 3600) // 60)
-            seconds = round(simulated_total_time % 60, 3)
+            driver_total_time = (track['base_lap_time'] + row['Lap Pace Delta (s)']) * track['base_laps']
+            gap_to_leader = driver_total_time - leader_total_time
             
-            telemetry_records.append({
-                "Finishing Order": f"P{idx+1}",
-                "Driver Lineup": row['driver'],
-                "Constructor / Team": row['team'],
-                "Simulated Theoretical Total Race Time": f"{hours:02d}:{minutes:02d}:{seconds:06.3f}",
-                "Estimated Tire Wear/Lap": f"{round(0.95 + (track_temp * 0.004) / d_profile['tire_management'], 3)}%"
+            d_profile = DRIVER_TRAITS.get(row['driver'], {"wet_mastery": 1.0, "tire_management": 1.0})
+            wear_factor = 0.95 + (track_temp * 0.004) / d_profile['tire_management']
+            
+            if wear_factor > 1.14:
+                strategy_tag = "⚠️ Extreme Wear: High 2-Pit Mandatory"
+            elif wear_factor > 1.06:
+                strategy_tag = "📈 Moderate Deg: 1-Pit Aggressive / 2-Pit Safe"
+            else:
+                strategy_tag = "✅ Optimal Curve: Comfortable 1-Pit Stop"
+
+            chart_data.append({
+                "Driver": row['driver'],
+                "Gap to Leader (Seconds)": round(gap_to_leader, 2),
+                "Team": row['team'],
+                "Pace Classification Strategy": strategy_tag
             })
             
-        st.dataframe(pd.DataFrame(telemetry_records), hide_index=True, use_container_width=True)
-    
+        chart_df = pd.DataFrame(chart_data)
+        st.bar_chart(chart_df, x="Driver", y="Gap to Leader (Seconds)", color="Team", use_container_width=True)
+        
+        st.subheader("💡 Race Engineering Tactical Readout")
+        for idx, row in chart_df.iterrows():
+            if idx == 0:
+                st.write(f"🥇 **{row['Driver']}** is controlling the clean air up front, managing the field baseline pace.")
+            else:
+                st.write(f"• **P{idx+1} | {row['Driver']}** ({row['Team']}): +{row['Gap to Leader (Seconds)']}s behind leader. Strategy Profile: `{row['Pace Classification Strategy']}`")
+                
 except Exception as e:
     st.error(f"Execution Error: {str(e)}")
