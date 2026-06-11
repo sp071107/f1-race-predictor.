@@ -6,11 +6,10 @@ import os
 st.set_page_config(page_title="F1 AI Race Predictor Pro", page_icon="🏎️", layout="wide")
 
 # --- HIGH-FIDELITY CIRCUIT PHYSICS ENGINE ---
-# Tracks now dictate baseline lap times, overtaking difficulty, and physical sensitivities
 CIRCUIT_DB = {
     "catalunya": {
         "name": "Circuit de Barcelona-Catalunya", "bias": "Aero-Heavy", 
-        "base_laps": 66, "base_lap_time": 75.0, "overtake_difficulty": 0.7, # 0.0 = Easy, 1.0 = Impossible
+        "base_laps": 66, "base_lap_time": 75.0, "overtake_difficulty": 0.7, 
         "fuel_penalty_per_kg": 0.035, "thermal_sensitivity": 0.04
     },
     "monaco": {
@@ -37,10 +36,9 @@ DRIVER_TRAITS = {
     "Fernando Alonso": {"wet_mastery": 1.15, "tire_management": 1.25, "traffic_combat": 1.20, "street_bias": 1.15},
     "Franco Colapinto": {"wet_mastery": 0.85, "tire_management": 0.95, "traffic_combat": 1.05, "street_bias": 1.10},  
     "Gabriel Bortoleto": {"wet_mastery": 0.90, "tire_management": 1.00, "traffic_combat": 1.00, "street_bias": 1.00},
-    "Kimi Antonelli": {"wet_mastery": 1.00, "tire_management": 1.05, "traffic_combat": 0.95, "street_bias": 0.95}
+    "Kimi Antonelli": {"wet_mastery": 1.30, "tire_management": 1.15, "traffic_combat": 1.10, "street_bias": 1.10} # Buffed to reflect actual race pace dominance
 }
 
-# --- UNIFIED BASE GRID COMPILATION ---
 DEFAULT_PREDICTIONS = [
     {"grid": 1, "driver": "Kimi Antonelli", "team": "Mercedes", "predicted_finish": 1.2, "circuit": "catalunya"},
     {"grid": 2, "driver": "Max Verstappen", "team": "Red Bull Racing", "predicted_finish": 2.0, "circuit": "catalunya"},
@@ -76,7 +74,6 @@ try:
         
     df = pd.DataFrame(raw_data)
     
-    # Validation safety net for core 2026 drivers
     existing_drivers = df['driver'].tolist()
     if "Franco Colapinto" not in existing_drivers:
         df = pd.concat([df, pd.DataFrame([{"grid": 9, "driver": "Franco Colapinto", "team": "Alpine", "predicted_finish": 7.1, "circuit": "catalunya"}])], ignore_index=True)
@@ -97,39 +94,39 @@ try:
     fuel_load = st.sidebar.slider("Initial Fuel Target (kg)", 95, 110, 100)
     ers_mode = st.sidebar.selectbox("ERS Deployment Curve", ["Balanced Harvest", "Overtake Mode Peak", "Battery Conserve"])
 
-    st.sidebar.subheader("🛠️ Constructor Development Pace")
+    # UI Sliders are now explicitly labeled for performance gains (+) or losses (-)
+    st.sidebar.subheader("🛠️ Constructor Performance Upgrades")
     team_modifiers = {}
     for team in unique_teams:
-        team_modifiers[team] = st.sidebar.slider(f"{team} Dev Delta (s)", -1.0, 1.0, 0.0, step=0.05)
+        team_modifiers[team] = st.sidebar.slider(f"{team} Pace Shift (s)", -1.0, 1.0, 0.0, step=0.05, help="Negative values reduce lap time (Faster)")
 
     st.sidebar.subheader("👤 Driver Form Adjustments")
     driver_modifiers = {}
     for driver in unique_drivers:
-        driver_modifiers[driver] = st.sidebar.slider(f"{driver} Driver Form (s)", -0.5, 0.5, 0.0, step=0.05)
+        driver_modifiers[driver] = st.sidebar.slider(f"{driver} Form Shift (s)", -0.5, 0.5, 0.0, step=0.05, help="Negative values reduce lap time (Faster)")
 
     # --- ZERO-SUM MATHEMATICAL PACE SIMULATION ---
     track_key = raw_data[0].get("circuit", "catalunya") if raw_data else "catalunya"
     track = CIRCUIT_DB.get(track_key, CIRCUIT_DB["default"])
 
     def calculate_lap_pace_delta(row):
-        """Calculates exact runtime pace adjustments in seconds per lap instead of pure positions"""
-        # Baseline pace translated directly from initial predictive ranking data
-        base_pace = float(row['predicted_finish']) * 0.15 
+        # FIX 1: Map the baseline ML position to a wider, realistic lap time gap structure
+        # A predicted finish of P1.2 gives an initial pace advantage over lower grid entries
+        base_pace = (float(row['predicted_finish']) - 1.0) * 0.45 
         
         team = row['team']
         driver = row['driver']
         grid = int(row['grid'])
         
-        # Fallback driver profile registry mapping
         traits = DRIVER_TRAITS.get(driver, {"wet_mastery": 1.0, "tire_management": 1.0, "traffic_combat": 1.0, "street_bias": 1.0})
         
-        # 1. Slider Deltas (Direct time modification impacts)
+        # FIX 2: Sliders are added directly. User subtracts seconds to go faster or adds to go slower.
         if team in team_modifiers:
             base_pace += team_modifiers[team]
         if driver in driver_modifiers:
             base_pace += driver_modifiers[driver]
 
-        # 2. Track Temperature Interactions (Tire Management Dependent)
+        # 2. Track Temperature Interactions
         temp_delta = track_temp - 35
         if temp_delta > 0:
             base_pace += (temp_delta * track["thermal_sensitivity"]) / traits["tire_management"]
@@ -140,35 +137,33 @@ try:
         fuel_delta = fuel_load - 100
         base_pace += (fuel_delta * track["fuel_penalty_per_kg"])
 
-        # 4. Energy Deployment Logic
+        # 4. Energy Deployment Logic (Faster drivers utilize deployment more effectively)
         if ers_mode == "Overtake Mode Peak":
-            base_pace -= 0.25 * traits["traffic_combat"]
+            base_pace -= 0.35 * traits["traffic_combat"]
         elif ers_mode == "Battery Conserve":
-            base_pace += 0.35 * (1.5 - traits["tire_management"])
+            base_pace += 0.45 * (1.5 - traits["tire_management"])
 
         # 5. Dynamic Climate Physics
         if weather_state == "Damp / Greasy":
-            base_pace += 1.5 * (1.5 - traits["wet_mastery"])
+            base_pace += 2.0 * (1.5 - traits["wet_mastery"])
         elif weather_state == "Heavy Monsoon Wet":
-            base_pace += 4.0 * (2.0 - traits["wet_mastery"])
+            base_pace += 5.0 * (2.0 - traits["wet_mastery"])
             if track["bias"] == "Aero-Heavy":
-                base_pace -= 0.2  # Downforce gives grip predictability
+                base_pace -= 0.3
 
         # 6. Non-Linear Grid Traffic Penalty
-        # Starting further down the grid inflicts a dirty-air and traffic time penalty,
-        # scaled directly by how difficult it is to overtake on this specific track.
-        if grid > 3:
-            traffic_penalty = (grid * 0.04) * track["overtake_difficulty"] / traits["traffic_combat"]
+        if grid > 1:
+            traffic_penalty = ((grid - 1) * 0.08) * track["overtake_difficulty"] / traits["traffic_combat"]
             base_pace += traffic_penalty
 
         return base_pace
 
-    # Apply the accurate physics model
+    # Apply corrected calculations
     df['Lap Pace Delta (s)'] = df.apply(calculate_lap_pace_delta, axis=1)
     
-    # CRITICAL FIX: Sort by raw cumulative pace, then rank positions to ensure zero ties
+    # Sort strictly by lap times (Lowest lap time delta = Fastest)
     df = df.sort_values(by='Lap Pace Delta (s)').reset_index(drop=True)
-    df['ML Predicted Finish'] = df.index + 1  # Solid Integer Positions P1, P2, P3...
+    df['ML Predicted Finish'] = df.index + 1  
     
     df['Net Positions Change'] = df['grid'] - df['ML Predicted Finish']
     
@@ -219,8 +214,6 @@ try:
         telemetry_records = []
         for idx, row in df.iterrows():
             d_profile = DRIVER_TRAITS.get(row['driver'], {"wet_mastery": 1.0, "tire_management": 1.0})
-            
-            # Translate calculations into clean race engineering outputs
             simulated_total_time = (track['base_lap_time'] + row['Lap Pace Delta (s)']) * track['base_laps']
             hours = int(simulated_total_time // 3600)
             minutes = int((simulated_total_time % 3600) // 60)
