@@ -274,7 +274,18 @@ with tab_home:
             color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
             return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
             
-        st.dataframe(df_drivers.style.apply(color_driver_rows, axis=1), hide_index=True, use_container_width=True, height=450)
+        st.dataframe(
+            df_drivers.style.apply(color_driver_rows, axis=1), 
+            hide_index=True, 
+            use_container_width=True, 
+            height=450,
+            column_config={
+                "Pos": st.column_config.Column(alignment="center"),
+                "Driver": st.column_config.Column(alignment="center"),
+                "Team": st.column_config.Column(alignment="center"),
+                "Points": st.column_config.Column(alignment="center"),
+            }
+        )
         
     with standings_col2:
         st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🛠️ Constructors Championship</h4>", unsafe_allow_html=True)
@@ -284,7 +295,17 @@ with tab_home:
             color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
             return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
             
-        st.dataframe(df_constructors.style.apply(color_team_rows, axis=1), hide_index=True, use_container_width=True, height=450)
+        st.dataframe(
+            df_constructors.style.apply(color_team_rows, axis=1), 
+            hide_index=True, 
+            use_container_width=True, 
+            height=450,
+            column_config={
+                "Pos": st.column_config.Column(alignment="center"),
+                "Team": st.column_config.Column(alignment="center"),
+                "Points": st.column_config.Column(alignment="center"),
+            }
+        )
 
     st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>💡 BEGINNER RACE BRIEFING: WHAT MATTERS THIS WEEKEND?</h3>", unsafe_allow_html=True)
     st.markdown(
@@ -366,7 +387,21 @@ with tab_predictor:
             return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace;'] * len(row)
         render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Recommended_Strategy', 'Target_Pit_Window', 'Strategic_Intent']].copy()
         render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'OPTIMAL_STRATEGY', 'PIT_WINDOW', 'STRATEGIC_INTENT']
-        st.dataframe(render_df.style.apply(style_authentic_rows, axis=1), hide_index=True, use_container_width=True)
+        
+        st.dataframe(
+            render_df.style.apply(style_authentic_rows, axis=1), 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "AI_FINISH": st.column_config.Column(alignment="center"),
+                "GRID_START": st.column_config.Column(alignment="center"),
+                "DRIVER_LINEUP": st.column_config.Column(alignment="center"),
+                "CONSTRUCTOR": st.column_config.Column(alignment="center"),
+                "OPTIMAL_STRATEGY": st.column_config.Column(alignment="center"),
+                "PIT_WINDOW": st.column_config.Column(alignment="center"),
+                "STRATEGIC_INTENT": st.column_config.Column(alignment="center"),
+            }
+        )
 
     with sub_tab2:
         leader_time = (80.0 + df_field.iloc[0]['Pace_Delta_Seconds']) * 55
