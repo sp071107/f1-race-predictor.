@@ -63,10 +63,21 @@ st.markdown(
         border-color: #FF1801 !important;
     }
     div[data-baseweb="slider"] > div { background-color: #FF1801 !important; }
+    
+    /* Force Dataframe Canvas Header Text Centering */
+    div[data-testid="stDataFrame"] th {
+        text-align: center !important;
+    }
+    .glideDataGrid-header-theme {
+        text-align: center !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
+
+# Set Pandas fallback alignment for styled configurations
+pd.set_option('display.colheader_justify', 'center')
 
 # --- PERFORMANCE COEFFICIENTS ---
 TEAM_META = {
@@ -272,7 +283,7 @@ with tab_home:
         
         def color_driver_rows(row):
             color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
+            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center;'] * len(row)
             
         st.dataframe(
             df_drivers.style.apply(color_driver_rows, axis=1), 
@@ -293,7 +304,7 @@ with tab_home:
         
         def color_team_rows(row):
             color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
+            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center;'] * len(row)
             
         st.dataframe(
             df_constructors.style.apply(color_team_rows, axis=1), 
@@ -384,7 +395,7 @@ with tab_predictor:
     with sub_tab1:
         def style_authentic_rows(row):
             color = TEAM_META.get(row['CONSTRUCTOR'], {"color": "#ffffff"})["color"]
-            return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace;'] * len(row)
+            return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace; text-align: center;'] * len(row)
         render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Recommended_Strategy', 'Target_Pit_Window', 'Strategic_Intent']].copy()
         render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'OPTIMAL_STRATEGY', 'PIT_WINDOW', 'STRATEGIC_INTENT']
         
