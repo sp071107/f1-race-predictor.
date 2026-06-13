@@ -207,7 +207,7 @@ st.markdown(
 )
 
 # --- APPLICATION NAVIGATIONAL ROUTER ---
-tab_home, tab_predictor = st.tabs(["🏠 COMMAND HOME", "📊 STRATEGY PREDICTOR ENGINE"])
+tab_home, tab_predictor, tab_chatbot = st.tabs(["🏠 COMMAND HOME", "📊 STRATEGY PREDICTOR ENGINE", "🎙️ AI RACE ENGINEER FEED"])
 
 # ==========================================
 # 🏠 TAB 1: THE HOME CENTER / WELCOME INTERFACE
@@ -414,3 +414,70 @@ with tab_predictor:
         leader_time = (80.0 + df_field.iloc[0]['Pace_Delta_Seconds']) * 55
         chart_payload = [{"Driver": r['driver'], "Gap to Leader (s)": round(((80.0 + r['Pace_Delta_Seconds']) * 55) - leader_time, 2), "Team": r['team']} for _, r in df_field.iterrows()]
         st.bar_chart(pd.DataFrame(chart_payload), x="Driver", y="Gap to Leader (s)", color="Team", use_container_width=True)
+
+
+# ==========================================
+# 🎙️ TAB 3: AI RACE ENGINEER CHATBOT
+# ==========================================
+with tab_chatbot:
+    st.markdown(
+        """
+        <div class="welcome-box" style="padding: 20px; border-color: #38bdf8;">
+            <h3 style='margin: 0 0 5px 0; font-weight: 800; color: #ffffff;'>🎙️ Integrated Pit-to-Car Radio</h3>
+            <p style='margin: 0; color: #94a3b8; font-size: 0.95rem;'>
+                Query the telemetry database using natural language. The AI system interprets live session parameters, track configurations, and championship margins.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Initialize persistent memory logs across execution loops
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {"role": "assistant", "content": "Copy that, driver. Comm channels are clear. Telemetry models are compiled. Ask me anything about current strategy matrices or championship standings."}
+        ]
+
+    # Display chronological communication back-log
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Collect driver query input string
+    if user_query := st.chat_input("Ask Pit Wall: 'Who is leading the championship?' or 'Explain the winning strategy'"):
+        # Log input prompt
+        with st.chat_message("user"):
+            st.markdown(user_query)
+        st.session_state.chat_history.append({"role": "user", "content": user_query})
+
+        # Process rule-based engineering query parser
+        query_clean = user_query.lower()
+        ai_response = ""
+
+        if "who is leading" in query_clean or "championship leader" in query_clean:
+            top_driver = DRIVERS_STANDINGS_2026[0]
+            top_team = CONSTRUCTORS_STANDINGS_2026[0]
+            ai_response = f"**Championship Standing Verification:** Currently, **{top_driver['Driver']}** dominates the Driver Standings leading with **{top_driver['Points']} points** matching Mercedes power vectors. Over in the team stalls, **{top_team['Team']}** leads the Constructors with **{top_team['Points']} points**."
+        
+        elif "strategy" in query_clean or "winning plan" in query_clean or "pit window" in query_clean:
+            ai_response = f"**Strategy Prediction Matrix:** Based on current calculations for **{winner['driver']}**, our structural simulation recommends a **{winner['Recommended_Strategy']}** scheme. Target window options point to **{winner['Target_Pit_Window']}** to execution point, protecting against a tactical field offset."
+        
+        elif "winner" in query_clean or "predicted" in query_clean or "win" in query_clean:
+            ai_response = f"**Simulation Output:** Our predictive models show **{winner['driver']}** scaling for an optimal finish today for **{winner['team']}**, pulling a positive performance coefficient over the course of the session."
+        
+        elif "track" in query_clean or "temp" in query_clean or "weather" in query_clean:
+            ai_response = f"**Environmental Parameters:** We are currently operating under **{weather_state}** rules with track layout temps registering at **{track_temp}°C**. Performance thresholds on tire compounds are highly volatile at this range."
+        
+        elif "overtaker" in query_clean or "positions" in query_clean or "gained" in query_clean:
+            if charger['Net_Positions_Gained'] > 0:
+                ai_response = f"**Field Progression Target:** Keep an eye on **{charger['driver']}** starting back from P{int(charger['grid_start'])}. Telemetry outputs index them finishing around P{int(charger['Projected_Finish'])}, a net variation of **+{int(charger['Net_Positions_Gained'])} spots**."
+            else:
+                ai_response = "**Field Progression Target:** Current session coefficients indicate highly static tracks. Minimal overtaking delta shifts are anticipated inside this specific grid framework."
+        
+        else:
+            ai_response = f"Copy that, driver. Your comment noted. Telemetry models processing track data show **{winner['driver']}** maintains the dominant pace profile here at **{api_payload['circuit_short']}**, ahead of **{df_field.iloc[1]['driver']}** on adjusted race trim models. Let me know if you need specific driver gaps or championship point counts."
+
+        # Render processed AI engineer output block
+        with st.chat_message("assistant"):
+            st.markdown(ai_response)
+        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
