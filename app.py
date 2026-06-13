@@ -96,12 +96,10 @@ DRIVER_TRAITS = {
 }
 
 # --- SERVERLESS DATA ORCHESTRATION ENGINE (OPENF1) ---
-@st.cache_data(ttl=3600)  # Cache for 1 hour to stay safe within request boundaries
+@st.cache_data(ttl=3600)
 def pull_live_f1_session_payload():
-    """Fetches upcoming race weekend names, location data, and live qualifying rankings."""
     base_url = "https://api.openf1.org/v1"
     try:
-        # Get active or most recent Grand Prix Event metadata
         meeting_req = requests.get(f"{base_url}/meetings?meeting_key=latest", timeout=5).json()
         if not meeting_req:
             raise ValueError("No active meeting sequence discovered.")
@@ -109,7 +107,6 @@ def pull_live_f1_session_payload():
         meeting = meeting_req[0]
         m_key = meeting['meeting_key']
         
-        # Extract location, track identity and official naming strings
         payload = {
             "race_name": meeting.get("meeting_official_name") or meeting.get("meeting_name", "Grand Prix World Championship"),
             "location": f"{meeting.get('location', 'Unknown Circuit')}, {meeting.get('country_name', 'Global Cycle')}",
@@ -117,7 +114,6 @@ def pull_live_f1_session_payload():
             "qualifying_grid": {}
         }
         
-        # Pinpoint the qualifying round ID code inside this meeting block
         sessions_req = requests.get(f"{base_url}/sessions?meeting_key={m_key}", timeout=5).json()
         q_key = None
         for s in sessions_req:
@@ -125,10 +121,8 @@ def pull_live_f1_session_payload():
                 q_key = s['session_key']
                 break
         
-        # Scrape real-time classifications if the telemetry session concluded
         if q_key:
             results_req = requests.get(f"{base_url}/session_result?session_key={q_key}", timeout=5).json()
-            # Sort positions safely via dictionary comprehension structure
             for res in results_req:
                 pos = res.get('position')
                 d_num = res.get('driver_number')
@@ -137,15 +131,13 @@ def pull_live_f1_session_payload():
                     
         return payload
     except Exception:
-        # High-Fidelity local simulation fallback fallback object
         return {
-            "race_name": "Circuit de Barcelona-Catalunya Grand Prix",
-            "location": "Montmeló, Spain",
-            "circuit_short": "Catalunya Layout",
-            "qualifying_grid": {"1": 1, "11": 2, "4": 3, "16": 4, "81": 5, "63": 6, "55": 7, "14": 8}
+            "race_name": "Circuit de Monaco Grand Prix",
+            "location": "Monte Carlo, Monaco",
+            "circuit_short": "Monaco Layout",
+            "qualifying_grid": {"63": 1, "1": 2, "4": 3, "16": 4, "81": 5, "44": 6, "55": 7, "14": 8}
         }
 
-# Resolve active dataset live strings
 api_payload = pull_live_f1_session_payload()
 
 # --- CONSOLIDATED TELEMETRY BASELINE FIELD DATA ---
@@ -156,15 +148,13 @@ BASELINE_FIELD = [
     {"driver_num": "16", "driver": "Charles Leclerc", "team": "Ferrari", "base_rank": 2.8},
     {"driver_num": "81", "driver": "Oscar Piastri", "team": "McLaren", "base_rank": 3.8},
     {"driver_num": "44", "driver": "Lewis Hamilton", "team": "Mercedes", "base_rank": 4.2},
-    {"driver_num": "55", "Carlos Sainz": "Ferrari", "driver": "Carlos Sainz", "team": "Ferrari", "base_rank": 4.9},
+    {"driver_num": "55", "driver": "Carlos Sainz", "team": "Ferrari", "base_rank": 4.9},
     {"driver_num": "14", "driver": "Fernando Alonso", "team": "Aston Martin", "base_rank": 6.5}
 ]
 
-# Synchronize OpenF1 Live Grid positions array straight into the prediction seed mapping
 df_field = pd.DataFrame(BASELINE_FIELD)
 def sync_qualifying_positions(row):
     num_str = str(row['driver_num'])
-    # Pull qualifying location from API dataset or default fallback index mapping
     return api_payload["qualifying_grid"].get(num_str, int(row.name + 1))
 
 df_field['grid_start'] = df_field.apply(sync_qualifying_positions, axis=1)
@@ -207,15 +197,13 @@ with st.expander("👤 DRIVER COCKPIT: GRID CONTEXT & FOCUS ADJUSTMENT"):
             st.markdown(f"**{d_name}** `LIVE START: P{row['grid_start']}`")
             driver_modifiers[d_name] = st.slider(f"🧠 Focus Vector: {d_name}", -0.4, 0.4, 0.0, step=0.05)
 
-# --- RUN PREDICTIVE MACHINE LEARNING COMPUTATIONS ---
+# --- RUN PREDICTIVE MACHINE LEARNING COMPUTATIONS & STRATEGIES ---
 def process_pitwall_simulation(row):
-    # Log-linear field scaling equation logic
     base_pace = np.log1p(float(row['base_rank']) - 1.0) * 0.72
     team, driver, grid = row['team'], row['driver'], int(row['grid_start'])
     
     traits = DRIVER_TRAITS.get(driver, {"wet_mastery": 1.0, "tire_management": 1.0, "traffic_combat": 1.0})
     
-    # Adjust performance based on input modifiers
     base_pace += team_modifiers.get(team, 0.0) + driver_modifiers.get(driver, 0.0)
     base_pace += (track_temp - 38) * 0.025 / traits["tire_management"]
     base_pace += (fuel_load - 100) * 0.032
@@ -226,16 +214,29 @@ def process_pitwall_simulation(row):
     if "Damp" in weather_state: base_pace += 2.2 * (1.4 - traits["wet_mastery"])
     elif "Heavy" in weather_state: base_pace += 5.5 * (1.9 - traits["wet_mastery"])
     
-    # Calculate traffic penalty from starting grid position
     if grid > 1:
         base_pace += (np.power(grid - 1, 1.2) * 0.08) / traits["traffic_combat"]
         
     return base_pace
 
+def assign_race_strategy(grid_pos):
+    if grid_pos <= 3:
+        return "Medium ➔ Hard (1-Stop)", "Laps 20 - 26", "Track Position Lock"
+    elif 4 <= grid_pos <= 6:
+        return "Soft ➔ Medium ➔ Hard (2-Stop)", "Laps 14 & 40", "Aggressive Undercut Plan"
+    else:
+        return "Hard ➔ Medium (1-Stop Alt)", "Laps 38 - 45", "Long Stint Safety Car Gamble"
+
 df_field['Pace_Delta_Seconds'] = df_field.apply(process_pitwall_simulation, axis=1)
 df_field = df_field.sort_values(by='Pace_Delta_Seconds').reset_index(drop=True)
 df_field['Projected_Finish'] = df_field.index + 1
 df_field['Net_Positions_Gained'] = df_field['grid_start'] - df_field['Projected_Finish']
+
+# Map strategic calculations directly from qualifying result layouts
+strat_data = [assign_race_strategy(pos) for pos in df_field['grid_start']]
+df_field['Recommended_Strategy'] = [s[0] for s in strat_data]
+df_field['Target_Pit_Window'] = [s[1] for s in strat_data]
+df_field['Strategic_Intent'] = [s[2] for s in strat_data]
 
 winner = df_field.iloc[0]
 podium = df_field.iloc[1:3]
@@ -250,7 +251,7 @@ with h1:
     <div class="pitwall-card" style="border-left: 4px solid {TEAM_COLORS.get(winner['team'], '#FF1801')};">
         <div class="card-title">🏆 AI Predicted Winner ({api_payload['circuit_short']})</div>
         <div class="card-value">{winner['driver']}</div>
-        <div class="card-subtext">{winner['team']} • Base Sector Delta: {winner['Pace_Delta_Seconds']:.3f}s/lap</div>
+        <div class="card-subtext">{winner['team']} • Strategy: {winner['Recommended_Strategy']}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -260,7 +261,7 @@ with h2:
     <div class="pitwall-card" style="border-left: 4px solid #FF8000;">
         <div class="card-title">🥈 🥉 Podium Contenders</div>
         <div class="card-value" style="font-size: 1.2rem; padding-top:4px;">{p_text}</div>
-        <div class="card-subtext">High Probability Finishing Pod Locks</div>
+        <div class="card-subtext">High Probability Finishing Locks</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -275,18 +276,18 @@ with h3:
     """, unsafe_allow_html=True)
 
 # --- VISUAL TELEMETRY Standings GRID MATRICES ---
-tab1, tab2 = st.tabs(["🏁 COMPUTER MODEL STANDINGS", "⏱️ TOTAL RACE TIME GAP OUTSETS"])
+tab1, tab2 = st.tabs(["🏁 COMPUTER MODEL STANDINGS & STRATEGIES", "⏱️ TOTAL RACE TIME GAP OUTSETS"])
 
 with tab1:
     def style_authentic_rows(row):
         color = TEAM_COLORS.get(row['CONSTRUCTOR'], '#ffffff')
         return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace;'] * len(row)
 
-    render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Pace_Delta_Seconds', 'Net_Positions_Gained']].copy()
-    render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'LAP_PACE_DELTA', 'NET_DELTA']
+    render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Recommended_Strategy', 'Target_Pit_Window', 'Strategic_Intent']].copy()
+    render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'OPTIMAL_STRATEGY', 'PIT_WINDOW', 'STRATEGIC_INTENT']
     
     st.dataframe(
-        render_df.style.apply(style_authentic_rows, axis=1).format({"LAP_PACE_DELTA": "{:+.3f}s", "NET_DELTA": "{:+d}"}),
+        render_df.style.apply(style_authentic_rows, axis=1),
         hide_index=True, use_container_width=True
     )
 
@@ -294,7 +295,6 @@ with tab2:
     st.subheader("⏱️ Total Race Distance Gap Differential (Seconds)")
     st.caption("Calculates total race gaps across full distance compared against our predicted race leader.")
     
-    # Establish baseline benchmark calculations assuming a standard 55-lap lifecycle run 
     leader_time = (82.0 + df_field.iloc[0]['Pace_Delta_Seconds']) * 55
     chart_payload = []
     
