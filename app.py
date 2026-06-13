@@ -1,266 +1,310 @@
 import streamlit as st
-import json
 import pandas as pd
 import numpy as np
-import os
+import requests
 
-st.set_page_config(page_title="F1 Pit-Wall Live Predictor", page_icon="🏎️", layout="wide")
+# Set page configuration immediately at boot
+st.set_page_config(page_title="F1 Pit-Wall Strategy Console", page_icon="🏎️", layout="wide")
 
-# 🏎️ OFFICIAL F1 BRANDING HEX COLOR MATRIX
-TEAM_COLORS = {
-    "Mercedes": "#00A294",
-    "Red Bull Racing": "#3671C6",
-    "Ferrari": "#E80020",
-    "McLaren": "#FF8000",
-    "Aston Martin": "#229971",
-    "Alpine": "#0093CC",
-    "Williams": "#37BEDD",
-    "RB": "#6692FF",
-    "Sauber": "#52E252",
-    "Audi": "#F50A23",
-    "Haas": "#B6BABD"
-}
-
-# --- HIGH-FIDELITY CSS PIT WALL THEME INJECTION ---
+# --- PREMIUM PIT-WALL TELEMETRY THEME INJECTION (CSS) ---
 st.markdown(
     """
     <style>
-    /* Main Background & Font Styling */
+    /* Absolute Dark Background Grid Elements */
     .stApp {
-        background-color: #0e1117;
-        color: #e2e8f0;
-        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        background-color: #0b0d12;
+        color: #f1f5f9;
+        font-family: 'Segoe UI', Monaco, monospace;
     }
     
-    /* Top F1 Accent Line */
+    /* Signature F1 Racing Crimson Accent Top Divider Bar */
     header {
         border-top: 5px solid #FF1801 !important;
     }
     
-    /* Custom Pit-Wall Metric Cards */
+    /* Live Race Context Header Banner Card */
+    .race-context-banner {
+        background: linear-gradient(90deg, #161922 0%, #1f2431 100%);
+        border-left: 5px solid #FF1801;
+        border-radius: 6px;
+        padding: 22px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    
+    /* Custom High-Fidelity Pit Wall Cards */
     .pitwall-card {
-        background: linear-gradient(135deg, #161922 0%, #1e2230 100%);
-        border-left: 4px solid #FF1801;
+        background: linear-gradient(135deg, #12151e 0%, #1a1e2a 100%);
+        border: 1px solid #282e3d;
         border-radius: 8px;
         padding: 20px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
         margin-bottom: 15px;
     }
-    .pitwall-card-winner { border-left-color: #E80020; }
-    .pitwall-card-podium { border-left-color: #FF8000; }
-    .pitwall-card-charge { border-left-color: #37BEDD; }
-    
     .card-title {
         color: #94a3b8;
         font-size: 0.75rem;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.12em;
         font-weight: 700;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
     }
     .card-value {
         color: #ffffff;
-        font-size: 1.4rem;
+        font-size: 1.45rem;
         font-weight: 800;
+        letter-spacing: -0.02em;
     }
     .card-subtext {
         color: #38bdf8;
         font-size: 0.8rem;
         margin-top: 6px;
+        font-weight: 500;
     }
     
-    /* Sleek Container & Expander styling */
+    /* Sleek Clean Streamlit Containers */
     .stExpander {
-        background-color: #161922 !important;
-        border: 1px solid #2d3142 !important;
+        background-color: #12151e !important;
+        border: 1px solid #232936 !important;
         border-radius: 8px !important;
     }
     
-    /* Streamlit Slider custom coloring */
-    div[data-baseweb="slider"] > div { background-color: #ff1801 !important; }
-    
-    /* Dataframe layout adjustment */
-    .dataframe {
-        border: 1px solid #2d3142 !important;
-    }
+    /* Customizing Sliders to Match Pit Wall Display */
+    div[data-baseweb="slider"] > div { background-color: #FF1801 !important; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# --- CIRCUIT SPECS & DATA ASSETS ---
-CIRCUIT_DB = {
-    "catalunya": {"name": "Circuit de Barcelona-Catalunya", "bias": "Aero-Heavy", "base_laps": 66, "base_lap_time": 75.0, "overtake_difficulty": 0.7, "fuel_penalty_per_kg": 0.035, "thermal_sensitivity": 0.04},
-    "monaco": {"name": "Circuit de Monaco", "bias": "Mechanical-Grip", "base_laps": 78, "base_lap_time": 72.0, "overtake_difficulty": 0.95, "fuel_penalty_per_kg": 0.022, "thermal_sensitivity": 0.01},
-    "baku": {"name": "Baku City Circuit", "bias": "Top-Speed", "base_laps": 51, "base_lap_time": 103.0, "overtake_difficulty": 0.3, "fuel_penalty_per_kg": 0.040, "thermal_sensitivity": 0.025},
-    "default": {"name": "Grand Prix Premium Circuit", "bias": "Balanced", "base_laps": 55, "base_lap_time": 90.0, "overtake_difficulty": 0.5, "fuel_penalty_per_kg": 0.030, "thermal_sensitivity": 0.02}
+# --- TELEMETRY COLOR BRANDING DELTA MATRIX ---
+TEAM_COLORS = {
+    "Mercedes": "#00A294", "Red Bull Racing": "#3671C6", "Ferrari": "#E80020",
+    "McLaren": "#FF8000", "Aston Martin": "#229971", "Alpine": "#0093CC",
+    "Williams": "#37BEDD", "RB": "#6692FF", "Sauber": "#52E252",
+    "Haas": "#B6BABD", "Audi": "#F50A23"
 }
 
 DRIVER_TRAITS = {
     "Max Verstappen": {"wet_mastery": 1.25, "tire_management": 1.20, "traffic_combat": 1.15},
     "Lewis Hamilton": {"wet_mastery": 1.20, "tire_management": 1.15, "traffic_combat": 1.10},
-    "Fernando Alonso": {"wet_mastery": 1.15, "tire_management": 1.25, "traffic_combat": 1.20},
-    "Kimi Antonelli": {"wet_mastery": 1.35, "tire_management": 1.20, "traffic_combat": 1.10}
+    "Lando Norris": {"wet_mastery": 1.10, "tire_management": 1.10, "traffic_combat": 1.05},
+    "Charles Leclerc": {"wet_mastery": 1.15, "tire_management": 1.05, "traffic_combat": 1.15},
+    "Oscar Piastri": {"wet_mastery": 1.05, "tire_management": 1.10, "traffic_combat": 1.10},
+    "George Russell": {"wet_mastery": 1.15, "tire_management": 1.05, "traffic_combat": 1.05},
+    "Carlos Sainz": {"wet_mastery": 1.10, "tire_management": 1.20, "traffic_combat": 1.10},
+    "Fernando Alonso": {"wet_mastery": 1.20, "tire_management": 1.25, "traffic_combat": 1.20}
 }
 
-DEFAULT_PREDICTIONS = [
-    {"grid": 1, "driver": "Kimi Antonelli", "team": "Mercedes", "predicted_finish": 1.2, "circuit": "catalunya"},
-    {"grid": 2, "driver": "Max Verstappen", "team": "Red Bull Racing", "predicted_finish": 2.0, "circuit": "catalunya"},
-    {"grid": 3, "driver": "Lando Norris", "team": "McLaren", "predicted_finish": 2.5, "circuit": "catalunya"},
-    {"grid": 4, "driver": "Charles Leclerc", "team": "Ferrari", "predicted_finish": 3.1, "circuit": "catalunya"},
-    {"grid": 5, "driver": "Oscar Piastri", "team": "McLaren", "predicted_finish": 4.0, "circuit": "catalunya"},
-    {"grid": 6, "driver": "Lewis Hamilton", "team": "Ferrari", "predicted_finish": 4.8, "circuit": "catalunya"},
-    {"grid": 7, "driver": "George Russell", "team": "Mercedes", "predicted_finish": 5.2, "circuit": "catalunya"},
-    {"grid": 8, "driver": "Carlos Sainz", "team": "Williams", "predicted_finish": 6.5, "circuit": "catalunya"}
+# --- SERVERLESS DATA ORCHESTRATION ENGINE (OPENF1) ---
+@st.cache_data(ttl=3600)  # Cache for 1 hour to stay safe within request boundaries
+def pull_live_f1_session_payload():
+    """Fetches upcoming race weekend names, location data, and live qualifying rankings."""
+    base_url = "https://api.openf1.org/v1"
+    try:
+        # Get active or most recent Grand Prix Event metadata
+        meeting_req = requests.get(f"{base_url}/meetings?meeting_key=latest", timeout=5).json()
+        if not meeting_req:
+            raise ValueError("No active meeting sequence discovered.")
+        
+        meeting = meeting_req[0]
+        m_key = meeting['meeting_key']
+        
+        # Extract location, track identity and official naming strings
+        payload = {
+            "race_name": meeting.get("meeting_official_name") or meeting.get("meeting_name", "Grand Prix World Championship"),
+            "location": f"{meeting.get('location', 'Unknown Circuit')}, {meeting.get('country_name', 'Global Cycle')}",
+            "circuit_short": meeting.get("circuit_short_name", "GP Layout"),
+            "qualifying_grid": {}
+        }
+        
+        # Pinpoint the qualifying round ID code inside this meeting block
+        sessions_req = requests.get(f"{base_url}/sessions?meeting_key={m_key}", timeout=5).json()
+        q_key = None
+        for s in sessions_req:
+            if "Qualifying" in s.get("session_name", ""):
+                q_key = s['session_key']
+                break
+        
+        # Scrape real-time classifications if the telemetry session concluded
+        if q_key:
+            results_req = requests.get(f"{base_url}/session_result?session_key={q_key}", timeout=5).json()
+            # Sort positions safely via dictionary comprehension structure
+            for res in results_req:
+                pos = res.get('position')
+                d_num = res.get('driver_number')
+                if pos and d_num:
+                    payload["qualifying_grid"][str(d_num)] = int(pos)
+                    
+        return payload
+    except Exception:
+        # High-Fidelity local simulation fallback fallback object
+        return {
+            "race_name": "Circuit de Barcelona-Catalunya Grand Prix",
+            "location": "Montmeló, Spain",
+            "circuit_short": "Catalunya Layout",
+            "qualifying_grid": {"1": 1, "11": 2, "4": 3, "16": 4, "81": 5, "63": 6, "55": 7, "14": 8}
+        }
+
+# Resolve active dataset live strings
+api_payload = pull_live_f1_session_payload()
+
+# --- CONSOLIDATED TELEMETRY BASELINE FIELD DATA ---
+BASELINE_FIELD = [
+    {"driver_num": "63", "driver": "George Russell", "team": "Mercedes", "base_rank": 3.2},
+    {"driver_num": "1", "driver": "Max Verstappen", "team": "Red Bull Racing", "base_rank": 1.5},
+    {"driver_num": "4", "driver": "Lando Norris", "team": "McLaren", "base_rank": 2.1},
+    {"driver_num": "16", "driver": "Charles Leclerc", "team": "Ferrari", "base_rank": 2.8},
+    {"driver_num": "81", "driver": "Oscar Piastri", "team": "McLaren", "base_rank": 3.8},
+    {"driver_num": "44", "driver": "Lewis Hamilton", "team": "Mercedes", "base_rank": 4.2},
+    {"driver_num": "55", "Carlos Sainz": "Ferrari", "driver": "Carlos Sainz", "team": "Ferrari", "base_rank": 4.9},
+    {"driver_num": "14", "driver": "Fernando Alonso", "team": "Aston Martin", "base_rank": 6.5}
 ]
 
-# --- UI APP HEADER ---
-col_logo, col_title = st.columns([1, 11])
-with col_logo:
-    st.markdown("<h1 style='color: #FF1801; font-size: 3.5rem; margin-top: -10px;'>🏁</h1>", unsafe_allow_html=True)
-with col_title:
-    st.markdown("<h1 style='letter-spacing: -0.03em; font-weight: 900; margin-bottom: 0px;'>F1 STRATEGY PIT-WALL</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color: #64748b; font-size: 0.95rem; margin-top: -5px; font-weight: 500;'>Predictive Telemetry & Real-Time Race Delta Matrix</p>", unsafe_allow_html=True)
+# Synchronize OpenF1 Live Grid positions array straight into the prediction seed mapping
+df_field = pd.DataFrame(BASELINE_FIELD)
+def sync_qualifying_positions(row):
+    num_str = str(row['driver_num'])
+    # Pull qualifying location from API dataset or default fallback index mapping
+    return api_payload["qualifying_grid"].get(num_str, int(row.name + 1))
 
-try:
-    raw_data = DEFAULT_PREDICTIONS
-    df = pd.DataFrame(raw_data)
-    unique_teams = sorted(df['team'].unique())
-    unique_drivers = sorted(df['driver'].unique())
+df_field['grid_start'] = df_field.apply(sync_qualifying_positions, axis=1)
 
-    # --- SIMULATION CONFIGURATION PANEL ---
-    st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight:700;'>🕹️ ENVIRONMENT CONTROLS</h3>", unsafe_allow_html=True)
+# --- HEADER AREA & DYNAMIC CONTENT WRAPPER ---
+st.markdown(
+    f"""
+    <div class="race-context-banner">
+        <span style="color: #FF1801; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.15em; text-transform: uppercase;">📡 LIVE STRATEGY DEPLOYMENT ENGINE</span>
+        <h1 style="margin: 4px 0 2px 0; font-weight: 900; letter-spacing: -0.02em; font-size: 2.2rem; color: #ffffff;">{api_payload['race_name'].upper()}</h1>
+        <p style="margin: 0; color: #94a3b8; font-size: 1.05rem; font-weight: 500;">📍 Venue Tracking: <b style="color: #38bdf8;">{api_payload['location']}</b> &nbsp;|&nbsp; Track Profile: <b>{api_payload['circuit_short']}</b></p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+# --- SIMULATOR TACTICAL PANEL ---
+st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🕹️ PRE-RACE STRATEGY MATRIX</h3>", unsafe_allow_html=True)
+c1, c2, c3, c4 = st.columns(4)
+with c1: weather_state = st.selectbox("Track Surface State", ["Dry Baseline Asphalt", "Damp / Greasy Surface", "Heavy Monsoon Downpour"])
+with c2: track_temp = st.slider("Track Temp (°C)", 15, 65, 38)
+with c3: fuel_load = st.slider("Starting Fuel Load (kg)", 95, 110, 100)
+with c4: ers_mode = st.selectbox("ERS Deployment Curve", ["Balanced Energy Harvest", "Overtake Attack Curve", "Battery Preservation"])
+
+team_modifiers = {}
+driver_modifiers = {}
+
+with st.expander("🛠️ CONSTRUCTOR GARAGE: REAL-TIME UPGRADE SCALING"):
+    team_cols = st.columns(2)
+    for idx, team in enumerate(sorted(df_field['team'].unique())):
+        with team_cols[idx % 2]:
+            team_modifiers[team] = st.slider(f"⚙️ {team} Field Upgrade Delta (s)", -0.8, 0.8, 0.0, step=0.05)
+
+with st.expander("👤 DRIVER COCKPIT: GRID CONTEXT & FOCUS ADJUSTMENT"):
+    st.caption("Review current live starting positions pulled directly from telemetry session outcomes below.")
+    driver_cols = st.columns(4)
+    for idx, row in df_field.iterrows():
+        d_name = row['driver']
+        with driver_cols[idx % 4]:
+            st.markdown(f"**{d_name}** `LIVE START: P{row['grid_start']}`")
+            driver_modifiers[d_name] = st.slider(f"🧠 Focus Vector: {d_name}", -0.4, 0.4, 0.0, step=0.05)
+
+# --- RUN PREDICTIVE MACHINE LEARNING COMPUTATIONS ---
+def process_pitwall_simulation(row):
+    # Log-linear field scaling equation logic
+    base_pace = np.log1p(float(row['base_rank']) - 1.0) * 0.72
+    team, driver, grid = row['team'], row['driver'], int(row['grid_start'])
     
-    env_card = st.container()
-    with env_card:
-        env_col1, env_col2, env_col3, env_col4 = st.columns(4)
-        with env_col1:
-            weather_state = st.selectbox("Track Surface", ["Dry Baseline", "Damp / Greasy", "Heavy Monsoon Wet"])
-        with env_col2:
-            track_temp = st.slider("Track Temp (°C)", 15, 60, 35)
-        with env_col3:
-            fuel_load = st.slider("Fuel Target (kg)", 95, 110, 100)
-        with env_col4:
-            ers_mode = st.selectbox("ERS Deployment Curve", ["Balanced Harvest", "Overtake Mode Peak", "Battery Conserve"])
-
-    # Accordions designed cleanly to match dark garage spaces
-    team_modifiers = {}
-    driver_modifiers = {}
-
-    with st.expander("🛠️ CONSTRUCTOR GARAGE: PERFORMANCE CONFIGURATOR"):
-        team_cols = st.columns(2)
-        for idx, team in enumerate(unique_teams):
-            col_target = team_cols[idx % 2]
-            with col_target:
-                # Use delta feedback text instead of basic numbers
-                raw_team_val = st.slider(f"⚙️ {team} Upgrade Package", -1.0, 1.0, 0.0, step=0.05, key=f"t_{team}")
-                team_modifiers[team] = raw_team_val
-
-    with st.expander("👤 DRIVER COCKPIT: LIVE TELEMETRY BIAS"):
-        driver_cols = st.columns(4)
-        for idx, driver in enumerate(unique_drivers):
-            col_target = driver_cols[idx % 4]
-            with col_target:
-                raw_driver_val = st.slider(f"🧠 {driver} Form Focus", -0.5, 0.5, 0.0, step=0.05, key=f"d_{driver}")
-                driver_modifiers[driver] = raw_driver_val
-
-    # --- SIMULATION ENGINE MATHEMATICS ---
-    track_key = raw_data[0].get("circuit", "catalunya")
-    track = CIRCUIT_DB.get(track_key, CIRCUIT_DB["default"])
-
-    def calculate_lap_pace_delta(row):
-        base_pace = np.log1p(float(row['predicted_finish']) - 1.0) * 0.75 
-        team, driver, grid = row['team'], row['driver'], int(row['grid'])
-        traits = DRIVER_TRAITS.get(driver, {"wet_mastery": 1.0, "tire_management": 1.0, "traffic_combat": 1.0})
-        
-        base_pace += team_modifiers.get(team, 0.0) + driver_modifiers.get(driver, 0.0)
-        base_pace += (track_temp - 35) * track["thermal_sensitivity"] / traits["tire_management"]
-        base_pace += (fuel_load - 100) * track["fuel_penalty_per_kg"]
-
-        if ers_mode == "Overtake Mode Peak": base_pace -= 0.40 * traits["traffic_combat"]
-        elif ers_mode == "Battery Conserve": base_pace += 0.55 * (1.5 - traits["tire_management"])
-
-        if weather_state == "Damp / Greasy": base_pace += 2.5 * (1.5 - traits["wet_mastery"])
-        elif weather_state == "Heavy Monsoon Wet": base_pace += 6.0 * (2.0 - traits["wet_mastery"])
-
-        if grid > 1:
-            base_pace += (np.power(grid - 1, 1.25) * 0.09) * (track["overtake_difficulty"] / traits["traffic_combat"])
-        return base_pace
-
-    df['Lap Pace Delta (s)'] = df.apply(calculate_lap_pace_delta, axis=1)
-    df = df.sort_values(by='Lap Pace Delta (s)').reset_index(drop=True)
-    df['ML Predicted Finish'] = df.index + 1  
-    df['Net Positions Change'] = df['grid'] - df['ML Predicted Finish']
+    traits = DRIVER_TRAITS.get(driver, {"wet_mastery": 1.0, "tire_management": 1.0, "traffic_combat": 1.0})
     
-    winner = df.iloc[0]
-    podium = df.iloc[1:3]
-    top_charger = df.sort_values(by="Net Positions Change", ascending=False).iloc[0]
-
-    # --- TELEMETRY DASHBOARD DISPLAY (HIGH-DESIGN HTML KPI CARDS) ---
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight:700;'>📊 PIT-WALL INTELLIGENCE BROADCAST</h3>", unsafe_allow_html=True)
-    h1, h2, h3 = st.columns(3)
+    # Adjust performance based on input modifiers
+    base_pace += team_modifiers.get(team, 0.0) + driver_modifiers.get(driver, 0.0)
+    base_pace += (track_temp - 38) * 0.025 / traits["tire_management"]
+    base_pace += (fuel_load - 100) * 0.032
     
-    with h1:
-        st.markdown(f"""
-        <div class="pitwall-card pitwall-card-winner">
-            <div class="card-title">🏆 Predicted Race Winner</div>
-            <div class="card-value">{winner['driver']}</div>
-            <div class="card-subtext">{winner['team']} • Base Lap Delta: {winner['Lap Pace Delta (s)']:.3f}s</div>
-        </div>
-        """, unsafe_allow_html=True)
+    if ers_mode == "Overtake Attack Curve": base_pace -= 0.35 * traits["traffic_combat"]
+    elif ers_mode == "Battery Preservation": base_pace += 0.50 * (1.4 - traits["tire_management"])
+    
+    if "Damp" in weather_state: base_pace += 2.2 * (1.4 - traits["wet_mastery"])
+    elif "Heavy" in weather_state: base_pace += 5.5 * (1.9 - traits["wet_mastery"])
+    
+    # Calculate traffic penalty from starting grid position
+    if grid > 1:
+        base_pace += (np.power(grid - 1, 1.2) * 0.08) / traits["traffic_combat"]
         
-    with h2:
-        podium_text = ", ".join([f"P{int(r['ML Predicted Finish'])}: {r['driver']}" for _, r in podium.iterrows()])
-        st.markdown(f"""
-        <div class="pitwall-card pitwall-card-podium">
-            <div class="card-title">🥈 🥉 Podium Locks</div>
-            <div class="card-value" style="font-size: 1.15rem; margin-top:4px;">{podium_text}</div>
-            <div class="card-subtext">High Probability Strategic Windows Lock</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with h3:
-        charge_text = f"{top_charger['driver']} (+{int(top_charger['Net Positions Change'])})" if top_charger['Net Positions Change'] > 0 else "Field Gaps Stable"
-        st.markdown(f"""
-        <div class="pitwall-card pitwall-card-charge">
-            <div class="card-title">🚀 Advanced Field Overtaker</div>
-            <div class="card-value">{charge_text}</div>
-            <div class="card-subtext">Starting P{int(top_charger['grid'])} → Target P{int(top_charger['ML Predicted Finish'])}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    return base_pace
 
-    tab1, tab2 = st.tabs(["🏁 LIVE STANDINGS MATRIX", "⏱️ TYRE WEAR & GAP TELEMETRY"])
+df_field['Pace_Delta_Seconds'] = df_field.apply(process_pitwall_simulation, axis=1)
+df_field = df_field.sort_values(by='Pace_Delta_Seconds').reset_index(drop=True)
+df_field['Projected_Finish'] = df_field.index + 1
+df_field['Net_Positions_Gained'] = df_field['grid_start'] - df_field['Projected_Finish']
 
-    with tab1:
-        # Dynamically inject authentic team colors on the sidebar border of rows using styling functions
-        def style_team_rows(row):
-            color = TEAM_COLORS.get(row['team'], '#ffffff')
-            return [f'border-left: 5px solid {color}; background-color: #161922; font-weight: 600;'] * len(row)
+winner = df_field.iloc[0]
+podium = df_field.iloc[1:3]
+charger = df_field.sort_values(by="Net_Positions_Gained", ascending=False).iloc[0]
 
-        render_table = df[['ML Predicted Finish', 'grid', 'driver', 'team', 'Lap Pace Delta (s)', 'Net Positions Change']].copy()
-        render_table.columns = ['P_FINISH', 'GRID_START', 'DRIVER', 'team', 'LAP_DELTA', 'POSITION_CHANGE']
-        
-        styled_df = render_table.style.apply(style_team_rows, axis=1).format({
-            "LAP_DELTA": "{:+.3f}s", 
-            "POSITION_CHANGE": "{:+d}"
+# --- LIVE BROADCAST MATRIX PRESENTATION ---
+st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>📊 PROCESSED AI STANDINGS PREDICTIONS</h3>", unsafe_allow_html=True)
+h1, h2, h3 = st.columns(3)
+
+with h1:
+    st.markdown(f"""
+    <div class="pitwall-card" style="border-left: 4px solid {TEAM_COLORS.get(winner['team'], '#FF1801')};">
+        <div class="card-title">🏆 AI Predicted Winner ({api_payload['circuit_short']})</div>
+        <div class="card-value">{winner['driver']}</div>
+        <div class="card-subtext">{winner['team']} • Base Sector Delta: {winner['Pace_Delta_Seconds']:.3f}s/lap</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with h2:
+    p_text = ", ".join([f"P{int(r['Projected_Finish'])}: {r['driver']}" for _, r in podium.iterrows()])
+    st.markdown(f"""
+    <div class="pitwall-card" style="border-left: 4px solid #FF8000;">
+        <div class="card-title">🥈 🥉 Podium Contenders</div>
+        <div class="card-value" style="font-size: 1.2rem; padding-top:4px;">{p_text}</div>
+        <div class="card-subtext">High Probability Finishing Pod Locks</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with h3:
+    c_text = f"{charger['driver']} (+{int(charger['Net_Positions_Gained'])})" if charger['Net_Positions_Gained'] > 0 else "Grid Order Locked"
+    st.markdown(f"""
+    <div class="pitwall-card" style="border-left: 4px solid #37BEDD;">
+        <div class="card-title">🚀 Strategic Field Overtaker</div>
+        <div class="card-value">{c_text}</div>
+        <div class="card-subtext">Starting P{int(charger['grid_start'])} → Target Finish P{int(charger['Projected_Finish'])}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- VISUAL TELEMETRY Standings GRID MATRICES ---
+tab1, tab2 = st.tabs(["🏁 COMPUTER MODEL STANDINGS", "⏱️ TOTAL RACE TIME GAP OUTSETS"])
+
+with tab1:
+    def style_authentic_rows(row):
+        color = TEAM_COLORS.get(row['CONSTRUCTOR'], '#ffffff')
+        return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace;'] * len(row)
+
+    render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Pace_Delta_Seconds', 'Net_Positions_Gained']].copy()
+    render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'LAP_PACE_DELTA', 'NET_DELTA']
+    
+    st.dataframe(
+        render_df.style.apply(style_authentic_rows, axis=1).format({"LAP_PACE_DELTA": "{:+.3f}s", "NET_DELTA": "{:+d}"}),
+        hide_index=True, use_container_width=True
+    )
+
+with tab2:
+    st.subheader("⏱️ Total Race Distance Gap Differential (Seconds)")
+    st.caption("Calculates total race gaps across full distance compared against our predicted race leader.")
+    
+    # Establish baseline benchmark calculations assuming a standard 55-lap lifecycle run 
+    leader_time = (82.0 + df_field.iloc[0]['Pace_Delta_Seconds']) * 55
+    chart_payload = []
+    
+    for idx, row in df_field.iterrows():
+        driver_total = (82.0 + row['Pace_Delta_Seconds']) * 55
+        chart_payload.append({
+            "Driver": row['driver'],
+            "Gap to Leader (s)": round(driver_total - leader_time, 2),
+            "Team": row['team']
         })
         
-        st.dataframe(styled_df, hide_index=True, use_container_width=True)
-
-    with tab2:
-        leader_total = (track['base_lap_time'] + df.iloc[0]['Lap Pace Delta (s)']) * track['base_laps']
-        chart_data = []
-        
-        for idx, row in df.iterrows():
-            total_time = (track['base_lap_time'] + row['Lap Pace Delta (s)']) * track['base_laps']
-            chart_data.append({
-                "Driver": row['driver'],
-                "Gap to Leader (s)": round(total_time - leader_total, 2),
-                "Team": row['team']
-            })
-            
-        chart_df = pd.DataFrame(chart_data)
-        st.bar_chart(chart_df, x="Driver", y="Gap to Leader (s)", color="Team", use_container_width=True)
-                
-except Exception as e:
-    st.error(f"System Error: {str(e)}")
+    chart_df = pd.DataFrame(chart_payload)
+    st.bar_chart(chart_df, x="Driver", y="Gap to Leader (s)", color="Team", use_container_width=True)
