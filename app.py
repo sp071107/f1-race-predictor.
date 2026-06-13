@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import random
 
 # Set page configuration immediately at boot
 st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
@@ -42,19 +41,11 @@ st.markdown(
         padding: 30px;
         margin-bottom: 25px;
     }
-    .game-box {
-        background: linear-gradient(135deg, #1e1b4b 0%, #111827 100%);
-        border: 2px dashed #6366f1;
-        border-radius: 12px;
-        padding: 25px;
-        margin-top: 30px;
-    }
     .stExpander {
         background-color: #12151e !important;
         border: 1px solid #232936 !important;
         border-radius: 8px !important;
     }
-    /* Style tab navigation row */
     div[data-baseweb="tab-list"] {
         gap: 12px;
     }
@@ -91,6 +82,46 @@ TEAM_META = {
     "Aston Martin": {"color": "#229971", "base_pace_rank": 5.5},
     "Cadillac": {"color": "#DEB887", "base_pace_rank": 5.8}
 }
+
+# --- REAL-TIME CHAMPIONSHIP STANDINGS DATA SETS ---
+DRIVERS_STANDINGS_2026 = [
+    {"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156},
+    {"Pos": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Points": 90},
+    {"Pos": 3, "Driver": "G. RUSSELL", "Team": "Mercedes", "Points": 88},
+    {"Pos": 4, "Driver": "C. LECLERC", "Team": "Ferrari", "Points": 75},
+    {"Pos": 5, "Driver": "O. PIASTRI", "Team": "McLaren", "Points": 58},
+    {"Pos": 6, "Driver": "L. NORRIS", "Team": "McLaren", "Points": 58},
+    {"Pos": 7, "Driver": "M. VERSTAPPEN", "Team": "Red Bull Racing", "Points": 43},
+    {"Pos": 8, "Driver": "P. GASLY", "Team": "Alpine", "Points": 35},
+    {"Pos": 9, "Driver": "I. HADJAR", "Team": "Red Bull Racing", "Points": 26},
+    {"Pos": 10, "Driver": "L. LAWSON", "Team": "Racing Bulls", "Points": 24},
+    {"Pos": 11, "Driver": "O. BEARMAN", "Team": "Haas F1 Team", "Points": 18},
+    {"Pos": 12, "Driver": "F. COLAPINTO", "Team": "Alpine", "Points": 15},
+    {"Pos": 13, "Driver": "A. LINDBLAD", "Team": "Racing Bulls", "Points": 11},
+    {"Pos": 14, "Driver": "C. SAINZ", "Team": "Williams", "Points": 6},
+    {"Pos": 15, "Driver": "A. ALBON", "Team": "Williams", "Points": 5},
+    {"Pos": 16, "Driver": "E. OCON", "Team": "Haas F1 Team", "Points": 3},
+    {"Pos": 17, "Driver": "G. BORTOLETO", "Team": "Audi", "Points": 2},
+    {"Pos": 18, "Driver": "F. ALONSO", "Team": "Aston Martin", "Points": 1},
+    {"Pos": 19, "Driver": "S. PEREZ", "Team": "Cadillac", "Points": 0},
+    {"Pos": 20, "Driver": "N. HULKENBERG", "Team": "Audi", "Points": 0},
+    {"Pos": 21, "Driver": "V. BOTTAS", "Team": "Cadillac", "Points": 0},
+    {"Pos": 22, "Driver": "L. STROLL", "Team": "Aston Martin", "Points": 0}
+]
+
+CONSTRUCTORS_STANDINGS_2026 = [
+    {"Pos": 1, "Team": "Mercedes", "Points": 244},
+    {"Pos": 2, "Team": "Ferrari", "Points": 165},
+    {"Pos": 3, "Team": "McLaren", "Points": 116},
+    {"Pos": 4, "Team": "Red Bull Racing", "Points": 69},
+    {"Pos": 5, "Team": "Alpine", "Points": 50},
+    {"Pos": 6, "Team": "Racing Bulls", "Points": 35},
+    {"Pos": 7, "Team": "Haas F1 Team", "Points": 21},
+    {"Pos": 8, "Team": "Williams", "Points": 11},
+    {"Pos": 9, "Team": "Audi", "Points": 2},
+    {"Pos": 10, "Team": "Aston Martin", "Points": 1},
+    {"Pos": 11, "Team": "Cadillac", "Points": 0}
+]
 
 # --- SERVERLESS DATA ORCHESTRATION ENGINE (OPENF1 DIRECT CAPTURE) ---
 @st.cache_data(ttl=1800)
@@ -229,6 +260,31 @@ with tab_home:
             </div>
             """, unsafe_allow_html=True
         )
+
+    # --- SIDE BY SIDE CHAMPIONSHIP STANDINGS METRICS ---
+    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🏆 OFFICIAL CHAMPIONSHIP STANDINGS</h3>", unsafe_allow_html=True)
+    
+    standings_col1, standings_col2 = st.columns(2)
+    
+    with standings_col1:
+        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🏁 Driver Standings Leaderboard</h4>", unsafe_allow_html=True)
+        df_drivers = pd.DataFrame(DRIVERS_STANDINGS_2026)
+        
+        def color_driver_rows(row):
+            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
+            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
+            
+        st.dataframe(df_drivers.style.apply(color_driver_rows, axis=1), hide_index=True, use_container_width=True, height=450)
+        
+    with standings_col2:
+        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🛠️ Constructors Championship</h4>", unsafe_allow_html=True)
+        df_constructors = pd.DataFrame(CONSTRUCTORS_STANDINGS_2026)
+        
+        def color_team_rows(row):
+            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
+            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace;'] * len(row)
+            
+        st.dataframe(df_constructors.style.apply(color_team_rows, axis=1), hide_index=True, use_container_width=True, height=450)
 
     st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>💡 BEGINNER RACE BRIEFING: WHAT MATTERS THIS WEEKEND?</h3>", unsafe_allow_html=True)
     st.markdown(
