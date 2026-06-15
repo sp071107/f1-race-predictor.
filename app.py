@@ -507,16 +507,26 @@ with tab_predictor:
 # 🎙️ TAB 3: AI RACE ENGINEER CHATBOT
 # ==========================================
 with tab_chatbot:
-    st.markdown('<div class="hero-container" style="padding: 20px; border-color: #38bdf8; background: linear-gradient(145deg, #0f131a 0%, #131722 100%);"><h3 style='margin: 0 0 5px 0; font-weight: 800; color: #ffffff;'>🎙️ Integrated Pit-to-Car Radio</h3><p style='margin: 0; color: #94a3b8; font-size: 0.95rem;'>Query telemetry matrices using natural language tokens.</p></div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="hero-container" style="padding: 20px; border-color: #38bdf8; background: linear-gradient(145deg, #0f131a 0%, #131722 100%);">
+            <h3 style="margin: 0 0 5px 0; font-weight: 800; color: #ffffff;">🎙️ Integrated Pit-to-Car Radio</h3>
+            <p style="margin: 0; color: #94a3b8; font-size: 0.95rem;">Query telemetry matrices using natural language tokens.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [{"role": "assistant", "content": "Copy that, driver. Comm channels clear. Telemetry logs compiled."}]
 
     for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]): st.markdown(message["content"])
+        with st.chat_message(message["role"]): 
+            st.markdown(message["content"])
 
     if user_query := st.chat_input("Ask Pit Wall..."):
-        with st.chat_message("user"): st.markdown(user_query)
+        with st.chat_message("user"): 
+            st.markdown(user_query)
         st.session_state.chat_history.append({"role": "user", "content": user_query})
 
         query_clean = user_query.lower()
@@ -529,5 +539,6 @@ with tab_chatbot:
         else:
             ai_response = f"Copy that, driver. Data processing frames confirm **{winner['driver']}** maintains optimal pace vectors here at **{api_payload['circuit_short']}**."
 
-        with st.chat_message("assistant"): st.markdown(ai_response)
+        with st.chat_message("assistant"): 
+            st.markdown(ai_response)
         st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
