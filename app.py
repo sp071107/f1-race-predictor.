@@ -305,18 +305,25 @@ with tab_home:
         )
 
     # --- LIVE KPI CARDS ---
+    # --- LIVE KPI CARDS ---
     st.markdown("<h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>📋 CURRENT SESSION PROGRESSION METRICS</h3>", unsafe_allow_html=True)
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     
     with kpi1:
-        st.markdown(f'<div class="command-card" style="border-left: 4px solid #38bdf8;"><div class="card-label">Circuit Profile</div><div class="card-main">{api_payload["circuit_short"]}</div><div class="card-detail">Live Layout Map Loaded</div></div>', unsafe_allow_html=True)
+        card_1 = f'<div class="command-card" style="border-left: 4px solid #38bdf8;"><div class="card-label">Circuit Profile</div><div class="card-main">{api_payload["circuit_short"]}</div><div class="card-detail">Live Layout Map Loaded</div></div>'
+        st.markdown(card_1, unsafe_allow_html=True)
+        
     with kpi2:
-        st.markdown(f'<div class="command-card" style="border-left: 4px solid #a855f7;"><div class="card-label">Active Field</div><div class="card-main">{len(df_field)} Drivers</div><div class="card-detail">Transponder Mapping Clear</div></div>', unsafe_allow_html=True)
+        card_2 = f'<div class="command-card" style="border-left: 4px solid #a855f7;"><div class="card-label">Active Field</div><div class="card-main">{len(df_field)} Drivers</div><div class="card-detail">Transponder Mapping Clear</div></div>'
+        st.markdown(card_2, unsafe_allow_html=True)
+        
     with kpi3:
-        st.markdown('<div class="command-card" style="border-left: 4px solid #22c55e;"><div class="card-label">Session Status</div><div class="card-main">Qualifying</div><div class="card-detail">Grid Array Compiled</div></div>', unsafe_allow_html=True)
+        card_3 = '<div class="command-card" style="border-left: 4px solid #22c55e;"><div class="card-label">Session Status</div><div class="card-main">Qualifying</div><div class="card-detail">Grid Array Compiled</div></div>'
+        st.markdown(card_3, unsafe_allow_html=True)
+        
     with kpi4:
-        st.markdown('<div class="command-card" style="border-left: 4px solid #ff1801;"><div class="card-label">Championship P1</div><div class="card-main">K. ANTONELLI</div><div class="card-detail">Gap to P2: +66 Points</div></div>', unsafe_allow_html=True)
-
+        card_4 = '<div class="command-card" style="border-left: 4px solid #ff1801;"><div class="card-label">Championship P1</div><div class="card-main">K. ANTONELLI</div><div class="card-detail">Gap to P2: +66 Points</div></div>'
+        st.markdown(card_4, unsafe_allow_html=True)
     # --- CHAMPIONSHIP STANDINGS OVERVIEW ---
     st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏆 GLOBAL CHAMPIONSHIP STANDINGS OVERVIEW</h3>", unsafe_allow_html=True)
     standings_col1, standings_col2 = st.columns(2)
