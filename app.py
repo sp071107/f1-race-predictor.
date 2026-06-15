@@ -247,14 +247,15 @@ def pull_authentic_field_payload():
             ]
         }
 
-# --- OPTIMIZED HISTORICAL DATA ENGINE ---
+# --- OPTIMIZED 2026 HISTORICAL DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def fetch_completed_races_of_season():
     base_url = "https://api.openf1.org/v1"
-    current_year = datetime.datetime.now().year
+    # Locked strictly to 2026 season data streams
+    target_year = 2026
     try:
-        sessions_res = requests.get(f"{base_url}/sessions?year={current_year}&session_type=Race", timeout=7)
-        meetings_res = requests.get(f"{base_url}/meetings?year={current_year}", timeout=7)
+        sessions_res = requests.get(f"{base_url}/sessions?year={target_year}&session_type=Race", timeout=7)
+        meetings_res = requests.get(f"{base_url}/meetings?year={target_year}", timeout=7)
         
         if sessions_res.status_code != 200 or meetings_res.status_code != 200:
             raise ValueError("Rate limit hit or connection throttled.")
@@ -319,12 +320,10 @@ def fetch_historical_race_classification(session_key):
             pos = r.get('position')
             d_num = str(r.get('driver_number'))
             if pos and d_num in driver_map:
-                grid_pos = r.get('grid_position') or "Pitlane Start"
                 table_data.append({
-                    "Position": int(pos),
-                    "Driver": driver_map[d_num]["name"].upper(),
-                    "Team": driver_map[d_num]["team"],
-                    "Grid Start": grid_pos
+                    "POS": int(pos),
+                    "DRIVER": driver_map[d_num]["name"].upper(),
+                    "TEAM": driver_map[d_num]["team"].upper()
                 })
                 
         return pd.DataFrame(table_data) if table_data else get_fallback_classification()
@@ -333,13 +332,13 @@ def fetch_historical_race_classification(session_key):
 
 def get_fallback_classification():
     return pd.DataFrame([
-        {"Position": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Grid Start": 1},
-        {"Position": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Grid Start": 3},
-        {"Position": 3, "Driver": "G. RUSSELL", "Team": "Mercedes", "Grid Start": 2},
-        {"Position": 4, "Driver": "C. LECLERC", "Team": "Ferrari", "Grid Start": 4},
-        {"Position": 5, "Driver": "M. VERSTAPPEN", "Team": "Red Bull Racing", "Grid Start": 7},
-        {"Position": 6, "Driver": "L. NORRIS", "Team": "McLaren", "Grid Start": 5},
-        {"Position": 7, "Driver": "O. PIASTRI", "Team": "McLaren", "Grid Start": 6}
+        {"POS": 1, "DRIVER": "K. ANTONELLI", "TEAM": "MERCEDES"},
+        {"POS": 2, "DRIVER": "L. HAMILTON", "TEAM": "FERRARI"},
+        {"POS": 3, "DRIVER": "G. RUSSELL", "TEAM": "MERCEDES"},
+        {"POS": 4, "DRIVER": "C. LECLERC", "TEAM": "FERRARI"},
+        {"POS": 5, "DRIVER": "M. VERSTAPPEN", "TEAM": "RED BULL RACING"},
+        {"POS": 6, "DRIVER": "L. NORRIS", "TEAM": "MCLAREN"},
+        {"POS": 7, "DRIVER": "O. PIASTRI", "TEAM": "MCLAREN"}
     ])
 
 api_payload = pull_authentic_field_payload()
@@ -400,7 +399,7 @@ with tab_home:
         )
 
     # --- SEASON HISTORICAL RACE ARCHIVE SECTION ---
-    st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏁 SEASON HISTORICAL RACE ARCHIVE</h3>", unsafe_allow_html=True)
+    st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏁 2026 RACE ARCHIVE CLASSIFICATION</h3>", unsafe_allow_html=True)
     
     completed_races = fetch_completed_races_of_season()
     race_options = {r["name"]: r["session_key"] for r in completed_races}
@@ -411,21 +410,27 @@ with tab_home:
         selected_session_key = race_options[selected_race_name]
         df_historical_results = fetch_historical_race_classification(selected_session_key)
         
-        def style_historical_grid(row):
-            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #11141c; font-family: "JetBrains Mono"; text-align: center;'] * len(row)
+        # Format exact styling matching F1 app's minimal clean list aesthetic
+        def style_f1_app_archive(row):
+            # Resolve structural team names for color flags regardless of string case variations
+            raw_team_string = str(row['TEAM']).title()
+            lookup_color = TEAM_META.get(raw_team_string, {"color": "#1e2430"})["color"]
+            return [
+                f'border-left: 5px solid {lookup_color}; background-color: #11141c; color: #ffffff; font-family: "JetBrains Mono"; font-weight: bold; font-size: 1.05rem; text-align: left;',
+                f'background-color: #11141c; color: #ffffff; font-family: "Plus Jakarta Sans"; font-weight: 800; font-size: 1.1rem; text-align: left;',
+                f'background-color: #11141c; color: #64748b; font-family: "Plus Jakarta Sans"; font-weight: 600; font-size: 0.9rem; text-align: left;'
+            ]
             
-        styled_history = df_historical_results.style.apply(style_historical_grid, axis=1).set_properties(**{'text-align': 'center'})
+        styled_history = df_historical_results.style.apply(style_f1_app_archive, axis=1)
         
         st.dataframe(
             styled_history,
             hide_index=True,
             use_container_width=True,
             column_config={
-                "Position": st.column_config.Column(alignment="center"),
-                "Driver": st.column_config.Column(alignment="center"),
-                "Team": st.column_config.Column(alignment="center"),
-                "Grid Start": st.column_config.Column(alignment="center"),
+                "POS": st.column_config.Column(width="medium"),
+                "DRIVER": st.column_config.Column(width="large"),
+                "TEAM": st.column_config.Column(width="large"),
             }
         )
 
