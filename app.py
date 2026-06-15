@@ -2,65 +2,121 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import datetime
 
 # Set page configuration immediately at boot
-st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
+st.set_page_config(page_title="F1 Monitored | Pit-Wall Hub", page_icon="🏎️", layout="wide")
 
 # --- PREMIUM PIT-WALL TELEMETRY THEME INJECTION (CSS) ---
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Plus+Jakarta+Sans:wght@400;600;800&display=swap');
+    
     .stApp {
         background-color: #0b0d12;
         color: #f1f5f9;
-        font-family: 'Segoe UI', Monaco, monospace;
+        font-family: 'Plus Jakarta Sans', sans-serif;
     }
     header {
         border-top: 5px solid #FF1801 !important;
     }
+    
+    /* Container Enhancements */
     .race-context-banner {
-        background: linear-gradient(90deg, #161922 0%, #1f2431 100%);
-        border-left: 5px solid #FF1801;
-        border-radius: 6px;
+        background: linear-gradient(135deg, #11141d 0%, #1a1f2c 100%);
+        border: 1px solid #232936;
+        border-left: 6px solid #FF1801;
+        border-radius: 12px;
+        padding: 26px;
+        margin-bottom: 25px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    
+    .command-card {
+        background: linear-gradient(145deg, #131722 0%, #1a1e2d 100%);
+        border: 1px solid #242b3d;
+        border-radius: 12px;
         padding: 22px;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-    }
-    .pitwall-card {
-        background: linear-gradient(135deg, #12151e 0%, #1a1e2a 100%);
-        border: 1px solid #282e3d;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
         margin-bottom: 15px;
+        transition: transform 0.2s ease, border-color 0.2s ease;
     }
-    .welcome-box {
-        background: linear-gradient(135deg, #1a1c23 0%, #0d0e12 100%);
-        border: 1px solid #FF1801;
-        border-radius: 10px;
-        padding: 30px;
-        margin-bottom: 25px;
+    .command-card:hover {
+        transform: translateY(-2px);
+        border-color: #38bdf8;
     }
+    .card-label {
+        color: #64748b;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 6px;
+    }
+    .card-main {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: #ffffff;
+        letter-spacing: -0.02em;
+    }
+    .card-detail {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        color: #38bdf8;
+        margin-top: 4px;
+    }
+
+    .hero-container {
+        background: radial-gradient(circle at top right, rgba(255,24,1,0.08) 0%, rgba(11,13,18,0) 70%), 
+                    linear-gradient(145deg, #11131a 0%, #161924 100%);
+        border: 1px solid #282e3d;
+        border-radius: 14px;
+        padding: 35px;
+        margin-bottom: 30px;
+        position: relative;
+        overflow: hidden;
+    }
+    .hero-container::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; width: 4px; height: 100%;
+        background: #FF1801;
+    }
+
+    .brief-badge {
+        display: inline-block;
+        background: #1e2433;
+        border: 1px solid #333c51;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin-bottom: 10px;
+        width: 100%;
+    }
+    
     .stExpander {
         background-color: #12151e !important;
         border: 1px solid #232936 !important;
         border-radius: 8px !important;
     }
     div[data-baseweb="tab-list"] {
-        gap: 12px;
+        gap: 8px;
+        background-color: #11141c;
+        padding: 6px;
+        border-radius: 10px;
     }
     div[data-baseweb="tab"] {
-        background-color: #161922 !important;
-        border: 1px solid #282e3d !important;
-        color: #94a3b8 !important;
-        border-radius: 6px 6px 0px 0px !important;
-        padding: 10px 20px !important;
+        background-color: transparent !important;
+        border: none !important;
+        color: #64748b !important;
+        border-radius: 6px !important;
+        padding: 10px 24px !important;
         font-weight: 700 !important;
+        transition: all 0.15s ease;
     }
     div[data-baseweb="tab"][aria-selected="true"] {
         background-color: #FF1801 !important;
         color: #ffffff !important;
-        border-color: #FF1801 !important;
+        box-shadow: 0 4px 12px rgba(255, 24, 1, 0.3);
     }
     div[data-baseweb="slider"] > div { background-color: #FF1801 !important; }
     </style>
@@ -83,7 +139,7 @@ TEAM_META = {
     "Cadillac": {"color": "#DEB887", "base_pace_rank": 5.8}
 }
 
-# --- REAL-TIME CHAMPIONSHIP STANDINGS DATA SETS ---
+# --- CHAMPIONSHIP STANDINGS DATA SETS ---
 DRIVERS_STANDINGS_2026 = [
     {"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156},
     {"Pos": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Points": 90},
@@ -191,138 +247,190 @@ def pull_authentic_field_payload():
             ]
         }
 
+# --- DYNAMIC COMPLETED RACES DATA ENGINE ---
+@st.cache_data(ttl=3600)
+def fetch_completed_races_of_season():
+    base_url = "https://api.openf1.org/v1"
+    current_year = datetime.datetime.now().year
+    try:
+        # Step 1: Gather all meetings for the current season year
+        meetings = requests.get(f"{base_url}/meetings?year={current_year}", timeout=5).json()
+        completed_list = []
+        
+        for m in meetings:
+            m_key = m['meeting_key']
+            # Step 2: Query sessions associated with the weekend to isolate the final Main "Race"
+            sessions = requests.get(f"{base_url}/sessions?meeting_key={m_key}&session_name=Race", timeout=5).json()
+            if sessions:
+                completed_list.append({
+                    "name": m.get("meeting_official_name") or m.get("meeting_name"),
+                    "location": m.get("location"),
+                    "session_key": sessions[0]["session_key"]
+                })
+        return completed_list
+    except Exception:
+        # Fallback dataset to guarantee UI execution if the network pipeline stalls
+        return [
+            {"name": "Bahrain Grand Prix", "location": "Sakhir", "session_key": "9150"},
+            {"name": "Saudi Arabian Grand Prix", "location": "Jeddah", "session_key": "9158"},
+            {"name": "Australian Grand Prix", "location": "Melbourne", "session_key": "9166"},
+            {"name": "Circuit de Barcelona-Catalunya Grand Prix", "location": "Montmeló", "session_key": "9174"}
+        ]
+
+@st.cache_data(ttl=3600)
+def fetch_historical_race_classification(session_key):
+    base_url = "https://api.openf1.org/v1"
+    try:
+        results = requests.get(f"{base_url}/session_result?session_key={session_key}", timeout=5).json()
+        drivers = requests.get(f"{base_url}/drivers?session_key={session_key}", timeout=5).json()
+        
+        driver_map = {str(d['driver_number']): {"name": d.get('broadcast_name'), "team": d.get('team_name')} for d in drivers}
+        
+        table_data = []
+        for r in sorted(results, key=lambda x: x.get('position', 99)):
+            pos = r.get('position')
+            d_num = str(r.get('driver_number'))
+            if pos and d_num in driver_map:
+                table_data.append({
+                    "Position": int(pos),
+                    "Driver": driver_map[d_num]["name"],
+                    "Team": driver_map[d_num]["team"],
+                    "Grid Start": int(r.get('grid_position', 0)) if r.get('grid_position') else "N/A"
+                })
+        return pd.DataFrame(table_data)
+    except Exception:
+        # Static mock results mimicking actual classification lists
+        return pd.DataFrame([
+            {"Position": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Grid Start": 1},
+            {"Position": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Grid Start": 3},
+            {"Position": 3, "Driver": "G. RUSSELL", "Team": "Mercedes", "Grid Start": 2},
+            {"Position": 4, "Driver": "M. VERSTAPPEN", "Team": "Red Bull Racing", "Grid Start": 5}
+        ])
+
 api_payload = pull_authentic_field_payload()
 df_field = pd.DataFrame(api_payload["drivers"])
 
-# --- GLOBAL HUB HEADER BANNER ---
+# --- APP LAYOUT BANNER ---
 st.markdown(
     f"""
     <div class="race-context-banner">
-        <span style="color: #FF1801; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.15em; text-transform: uppercase;">📡 PIT-WALL INTEGRATED COMMAND SYSTEM</span>
-        <h1 style="margin: 4px 0 2px 0; font-weight: 900; letter-spacing: -0.02em; font-size: 2.2rem; color: #ffffff;">{api_payload['race_name'].upper()}</h1>
-        <p style="margin: 0; color: #94a3b8; font-size: 1.05rem; font-weight: 500;">📍 Location Context: <b style="color: #38bdf8;">{api_payload['location']}</b> &nbsp;|&nbsp; Global Telemetry Active</p>
+        <span style="color: #FF1801; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase; font-family: 'JetBrains Mono';">🛰️ LIVE TELEMETRY STREAM</span>
+        <h1 style="margin: 6px 0 4px 0; font-weight: 900; letter-spacing: -0.03em; font-size: 2.4rem; color: #ffffff;">{api_payload['race_name'].upper()}</h1>
+        <p style="margin: 0; color: #94a3b8; font-size: 1rem;">📍 Venue Matrix: <span style="color: #38bdf8; font-weight: 600;">{api_payload['location']}</span></p>
     </div>
     """, 
     unsafe_allow_html=True
 )
 
-# --- APPLICATION NAVIGATIONAL ROUTER ---
+# --- APP NAVIGATION TABS ---
 tab_home, tab_predictor, tab_chatbot = st.tabs(["🏠 COMMAND HOME", "📊 STRATEGY PREDICTOR ENGINE", "🎙️ AI RACE ENGINEER FEED"])
 
 # ==========================================
-# 🏠 TAB 1: THE HOME CENTER / WELCOME INTERFACE
+# 🏠 TAB 1: THE RE-DESIGNED COMMAND HOME
 # ==========================================
 with tab_home:
-    st.markdown(
-        """
-        <div class="welcome-box">
-            <h2 style='margin: 0 0 10px 0; font-weight: 800; color: #ffffff;'>Welcome to the Pit Wall, Strategist.</h2>
-            <p style='margin: 0; color: #cbd5e1; font-size: 1.05rem; line-height: 1.6;'>
-                This command deck breaks down high-level Formula 1 telemetry metrics into human-readable tactical elements. 
-                Whether you're looking to run complex race simulations or just trying to understand track variables without 
-                drowning in physics data, navigate using the tabs above to control the team's assets.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    hero_col, side_brief = st.columns([5, 3])
     
-    st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>📋 WEEKEND STATUS BRIEFING</h3>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            f"""
-            <div class="pitwall-card" style="border-left: 4px solid #38bdf8;">
-                <div class="card-title">🗺️ Track Venue Profile</div>
-                <div class="card-value">{api_payload['circuit_short']}</div>
-                <div class="card-subtext">Dynamic Live Transponder Feed</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-    with col2:
-        st.markdown(
-            f"""
-            <div class="pitwall-card" style="border-left: 4px solid #a855f7;">
-                <div class="card-title">🏎️ Registered Competitors</div>
-                <div class="card-value">{len(df_field)} Cars Processed</div>
-                <div class="card-subtext">Active 11-Team Grid Layout</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-    with col3:
+    with hero_col:
         st.markdown(
             """
-            <div class="pitwall-card" style="border-left: 4px solid #22c55e;">
-                <div class="card-title">🚦 Session Control</div>
-                <div class="card-value">Quali Complete</div>
-                <div class="card-subtext">Grid Order Ingestion: Successful</div>
+            <div class="hero-container">
+                <h2 style='margin: 0 0 12px 0; font-weight: 800; color: #ffffff; font-size: 1.8rem; letter-spacing: -0.01em;'>Pit-Wall Cockpit Activated.</h2>
+                <p style='margin: 0 0 20px 0; color: #94a3b8; font-size: 1.05rem; line-height: 1.6;'>
+                    Welcome to your tactical operational hub. This console parses raw Formula 1 sensor feeds and live event loops 
+                    into actionable engineering insight. Use the controller matrices above to step through race modeling or 
+                    issue commands straight to your AI digital Race Engineer.
+                </p>
+                <div style="font-family: 'JetBrains Mono'; font-size: 0.8rem; color: #64748b;">
+                    SYSTEM STATUS: <span style="color: #22c55e;">● ONLINE</span> &nbsp;&nbsp;|&nbsp;&nbsp; INGESTION LATENCY: <span style="color: #38bdf8;">14ms</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+    with side_brief:
+        st.markdown("<h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px;'>⚡ STRATEGIST QUICK PANEL</h3>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="brief-badge">
+                <span style="color: #ffb703; font-weight: 700; font-size: 0.85rem; display:block;">⚠️ DEGRADATION THREAT</span>
+                <span style="color: #cbd5e1; font-size: 0.85rem;">Asphalt track temperatures exceeding 35°C will severely drop tyre atomic cohesion.</span>
+            </div>
+            <div class="brief-badge">
+                <span style="color: #38bdf8; font-weight: 700; font-size: 0.85rem; display:block;">🔋 ERS OVERTAKE VECTOR</span>
+                <span style="color: #cbd5e1; font-size: 0.85rem;">Ensure tactical energy harvesting is complete prior to Sector 2 activation points.</span>
             </div>
             """, unsafe_allow_html=True
         )
 
-    # --- SIDE BY SIDE CHAMPIONSHIP STANDINGS METRICS ---
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🏆 OFFICIAL CHAMPIONSHIP STANDINGS</h3>", unsafe_allow_html=True)
+    # --- NEW ADDITION: COMPLETED RACES HISTORICAL CLASSIFICATION MATRIX ---
+    st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏁 SEASON HISTORICAL RACE ARCHIVE</h3>", unsafe_allow_html=True)
     
+    completed_races = fetch_completed_races_of_season()
+    race_options = {r["name"]: r["session_key"] for r in completed_races}
+    
+    selected_race_name = st.selectbox("Select Finished Grand Prix Venue:", list(race_options.keys()))
+    
+    if selected_race_name:
+        selected_session_key = race_options[selected_race_name]
+        df_historical_results = fetch_historical_race_classification(selected_session_key)
+        
+        def style_historical_grid(row):
+            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
+            return [f'border-left: 4px solid {color}; background-color: #11141c; font-family: "JetBrains Mono"; text-align: center;'] * len(row)
+            
+        styled_history = df_historical_results.style.apply(style_historical_grid, axis=1).set_properties(**{'text-align': 'center'})
+        
+        st.dataframe(
+            styled_history,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Position": st.column_config.Column(alignment="center"),
+                "Driver": st.column_config.Column(alignment="center"),
+                "Team": st.column_config.Column(alignment="center"),
+                "Grid Start": st.column_config.Column(alignment="center"),
+            }
+        )
+
+    # --- LIVE KPI CARDS ---
+    st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>📋 CURRENT SESSION PROGRESSION METRICS</h3>", unsafe_allow_html=True)
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    
+    with kpi1:
+        st.markdown(f'<div class="command-card" style="border-left: 4px solid #38bdf8;"><div class="card-label">Circuit Profile</div><div class="card-main">{api_payload["circuit_short"]}</div><div class="card-detail">Live Layout Map Loaded</div></div>', unsafe_allow_html=True)
+    with kpi2:
+        st.markdown(f'<div class="command-card" style="border-left: 4px solid #a855f7;"><div class="card-label">Active Field</div><div class="card-main">{len(df_field)} Drivers</div><div class="card-detail">Transponder Mapping Clear</div></div>', unsafe_allow_html=True)
+    with kpi3:
+        st.markdown('<div class="command-card" style="border-left: 4px solid #22c55e;"><div class="card-label">Session Status</div><div class="card-main">Qualifying</div><div class="card-detail">Grid Array Compiled</div></div>', unsafe_allow_html=True)
+    with kpi4:
+        st.markdown('<div class="command-card" style="border-left: 4px solid #ff1801;"><div class="card-label">Championship P1</div><div class="card-main">K. ANTONELLI</div><div class="card-detail">Gap to P2: +66 Points</div></div>', unsafe_allow_html=True)
+
+    # --- CHAMPIONSHIP STANDINGS OVERVIEW ---
+    st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏆 GLOBAL CHAMPIONSHIP STANDINGS OVERVIEW</h3>", unsafe_allow_html=True)
     standings_col1, standings_col2 = st.columns(2)
     
     with standings_col1:
-        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🏁 Driver Standings Leaderboard</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-bottom:12px; font-weight:700;'>🏁 Driver Leaderboard</h4>", unsafe_allow_html=True)
         df_drivers = pd.DataFrame(DRIVERS_STANDINGS_2026)
-        
-        def color_driver_rows(row):
-            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-            
-        styled_drivers = df_drivers.style.apply(color_driver_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
+        styled_drivers = df_drivers.style.apply(lambda r: [f'border-left: 4px solid {TEAM_META.get(r["Team"], {"color": "#282e3d"})["color"]}; background-color: #11141c; font-family: "JetBrains Mono"; text-align: center;'] * len(r), axis=1).set_properties(**{'text-align': 'center'})
         st.dataframe(
-            styled_drivers, 
-            hide_index=True, 
-            use_container_width=True, 
-            height=450,
-            column_config={
-                "Pos": st.column_config.Column(alignment="center"),
-                "Driver": st.column_config.Column(alignment="center"),
-                "Team": st.column_config.Column(alignment="center"),
-                "Points": st.column_config.Column(alignment="center"),
-            }
+            styled_drivers, hide_index=True, use_container_width=True, height=380,
+            column_config={"Pos": st.column_config.Column(alignment="center"), "Driver": st.column_config.Column(alignment="center"), "Team": st.column_config.Column(alignment="center"), "Points": st.column_config.Column(alignment="center")}
         )
         
     with standings_col2:
-        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🛠️ Constructors Championship</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#ffffff; font-size:1.1rem; margin-bottom:12px; font-weight:700;'>🛠️ Constructors Standings</h4>", unsafe_allow_html=True)
         df_constructors = pd.DataFrame(CONSTRUCTORS_STANDINGS_2026)
-        
-        def color_team_rows(row):
-            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-            
-        styled_constructors = df_constructors.style.apply(color_team_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
+        styled_constructors = df_constructors.style.apply(lambda r: [f'border-left: 4px solid {TEAM_META.get(r["Team"], {"color": "#282e3d"})["color"]}; background-color: #11141c; font-family: "JetBrains Mono"; text-align: center;'] * len(r), axis=1).set_properties(**{'text-align': 'center'})
         st.dataframe(
-            styled_constructors, 
-            hide_index=True, 
-            use_container_width=True, 
-            height=450,
-            column_config={
-                "Pos": st.column_config.Column(alignment="center"),
-                "Team": st.column_config.Column(alignment="center"),
-                "Points": st.column_config.Column(alignment="center"),
-            }
+            styled_constructors, hide_index=True, use_container_width=True, height=380,
+            column_config={"Pos": st.column_config.Column(alignment="center"), "Team": st.column_config.Column(alignment="center"), "Points": st.column_config.Column(alignment="center")}
         )
 
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>💡 BEGINNER RACE BRIEFING: WHAT MATTERS THIS WEEKEND?</h3>", unsafe_allow_html=True)
-    st.markdown(
-        """
-        * **The Starting Position Rule:** The driver starting P1 (Pole Position) has the clean air advantage. The further back you go, the more cars a driver has to overtake, which burns down their tyres much faster.
-        * **What is ERS?** Energy Recovery Systems act like a video-game speed boost button. Drivers harvest energy when braking and dump it back onto the straights to attack.
-        * **The Heat Threat:** High track temperatures heat up the rubber. If the asphalt gets too hot, the tyres lose atomic cohesion and turn into mush (called *falling off the cliff*).
-        """
-    )
-
-
 # ==========================================
-# 📊 TAB 2: THE CURRENT STRATEGY PREDICTOR
+# 📊 TAB 2: THE STRATEGY PREDICTOR
 # ==========================================
 with tab_predictor:
     st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🕹️ TRACK STRATEGY PARAMETERS</h3>", unsafe_allow_html=True)
@@ -339,7 +447,6 @@ with tab_predictor:
             with team_cols[idx % 2]:
                 team_modifiers[team] = st.slider(f"⚙️ {team} Delta Offset (s)", -0.8, 0.8, 0.0, step=0.05)
 
-    # --- MODEL PACE COMPUTATIONS ---
     def compute_high_accuracy_race_pace(row):
         team = row['team']
         grid = int(row['grid_start'])
@@ -370,44 +477,25 @@ with tab_predictor:
     podium = df_field.iloc[1:3]
     charger = df_field.sort_values(by="Net_Positions_Gained", ascending=False).iloc[0]
 
-    # --- LIVE BROADCAST MATRIX PRESENTATION ---
     st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>📊 HIGH-ACCURACY AI RUN PREDICTIONS</h3>", unsafe_allow_html=True)
     h1, h2, h3 = st.columns(3)
     with h1:
-        team_color = TEAM_META.get(winner['team'], {"color": "#FF1801"})["color"]
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid {team_color};"><div class="card-title">🏆 AI Predicted Winner</div><div class="card-value">{winner["driver"]}</div><div class="card-subtext">{winner["team"]} • {winner["Recommended_Strategy"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="command-card" style="border-left: 4px solid {TEAM_META.get(winner["team"], {"color": "#FF1801"})["color"]};"><div class="card-label">🏆 AI Predicted Winner</div><div class="card-main">{winner["driver"]}</div><div class="card-detail">{winner["team"]} • {winner["Recommended_Strategy"]}</div></div>', unsafe_allow_html=True)
     with h2:
         p_text = ", ".join([f"P{int(r['Projected_Finish'])}: {r['driver']}" for _, r in podium.iterrows()])
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid #FF8000;"><div class="card-title">🥈 🥉 Podium Contenders</div><div class="card-value" style="font-size: 1.15rem; padding-top:4px;">{p_text}</div><div class="card-subtext">Optimal Strategy Finish Group</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="command-card" style="border-left: 4px solid #FF8000;"><div class="card-label">🥈 🥉 Podium Contenders</div><div class="card-main" style="font-size: 1.25rem; padding-top:4px;">{p_text}</div><div class="card-detail">Optimal Strategy Finish Group</div></div>', unsafe_allow_html=True)
     with h3:
         c_text = f"{charger['driver']} (+{int(charger['Net_Positions_Gained'])})" if charger['Net_Positions_Gained'] > 0 else "Grid Order Locked"
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid #37BEDD;"><div class="card-title">🚀 Strategic Field Overtaker</div><div class="card-value">{c_text}</div><div class="card-subtext">Starting P{int(charger["grid_start"])} → Target P{int(charger["Projected_Finish"])}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="command-card" style="border-left: 4px solid #37BEDD;"><div class="card-label">🚀 Strategic Field Overtaker</div><div class="card-main">{c_text}</div><div class="card-detail">Starting P{int(charger["grid_start"])} → Target P{int(charger["Projected_Finish"])}</div></div>', unsafe_allow_html=True)
 
-    # --- MAIN PERFORMANCE TABLES ---
     sub_tab1, sub_tab2 = st.tabs(["🏁 LIVE MODEL STANDINGS & STRATEGIES", "⏱️ TOTAL RACE DISTANCE DIFFERENTIAL"])
     with sub_tab1:
-        def style_authentic_rows(row):
-            color = TEAM_META.get(row['CONSTRUCTOR'], {"color": "#ffffff"})["color"]
-            return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-        
         render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Recommended_Strategy', 'Target_Pit_Window', 'Strategic_Intent']].copy()
         render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'OPTIMAL_STRATEGY', 'PIT_WINDOW', 'STRATEGIC_INTENT']
-        
-        styled_render = render_df.style.apply(style_authentic_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
+        styled_render = render_df.style.apply(lambda r: [f'border-left: 5px solid {TEAM_META.get(r["CONSTRUCTOR"], {"color": "#ffffff"})["color"]}; background-color: #11141c; font-weight: 600; font-family: monospace; text-align: center;'] * len(r), axis=1).set_properties(**{'text-align': 'center'})
         st.dataframe(
-            styled_render, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                "AI_FINISH": st.column_config.Column(alignment="center"),
-                "GRID_START": st.column_config.Column(alignment="center"),
-                "DRIVER_LINEUP": st.column_config.Column(alignment="center"),
-                "CONSTRUCTOR": st.column_config.Column(alignment="center"),
-                "OPTIMAL_STRATEGY": st.column_config.Column(alignment="center"),
-                "PIT_WINDOW": st.column_config.Column(alignment="center"),
-                "STRATEGIC_INTENT": st.column_config.Column(alignment="center"),
-            }
+            styled_render, hide_index=True, use_container_width=True,
+            column_config={"AI_FINISH": st.column_config.Column(alignment="center"), "GRID_START": st.column_config.Column(alignment="center"), "DRIVER_LINEUP": st.column_config.Column(alignment="center"), "CONSTRUCTOR": st.column_config.Column(alignment="center"), "OPTIMAL_STRATEGY": st.column_config.Column(alignment="center"), "PIT_WINDOW": st.column_config.Column(alignment="center"), "STRATEGIC_INTENT": st.column_config.Column(alignment="center")}
         )
 
     with sub_tab2:
@@ -415,69 +503,31 @@ with tab_predictor:
         chart_payload = [{"Driver": r['driver'], "Gap to Leader (s)": round(((80.0 + r['Pace_Delta_Seconds']) * 55) - leader_time, 2), "Team": r['team']} for _, r in df_field.iterrows()]
         st.bar_chart(pd.DataFrame(chart_payload), x="Driver", y="Gap to Leader (s)", color="Team", use_container_width=True)
 
-
 # ==========================================
 # 🎙️ TAB 3: AI RACE ENGINEER CHATBOT
 # ==========================================
 with tab_chatbot:
-    st.markdown(
-        """
-        <div class="welcome-box" style="padding: 20px; border-color: #38bdf8;">
-            <h3 style='margin: 0 0 5px 0; font-weight: 800; color: #ffffff;'>🎙️ Integrated Pit-to-Car Radio</h3>
-            <p style='margin: 0; color: #94a3b8; font-size: 0.95rem;'>
-                Query the telemetry database using natural language. The AI system interprets live session parameters, track configurations, and championship margins.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown('<div class="hero-container" style="padding: 20px; border-color: #38bdf8; background: linear-gradient(145deg, #0f131a 0%, #131722 100%);"><h3 style='margin: 0 0 5px 0; font-weight: 800; color: #ffffff;'>🎙️ Integrated Pit-to-Car Radio</h3><p style='margin: 0; color: #94a3b8; font-size: 0.95rem;'>Query telemetry matrices using natural language tokens.</p></div>', unsafe_allow_html=True)
 
-    # Initialize persistent memory logs across execution loops
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            {"role": "assistant", "content": "Copy that, driver. Comm channels are clear. Telemetry models are compiled. Ask me anything about current strategy matrices or championship standings."}
-        ]
+        st.session_state.chat_history = [{"role": "assistant", "content": "Copy that, driver. Comm channels clear. Telemetry logs compiled."}]
 
-    # Display chronological communication back-log
     for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        with st.chat_message(message["role"]): st.markdown(message["content"])
 
-    # Collect driver query input string
-    if user_query := st.chat_input("Ask Pit Wall: 'Who is leading the championship?' or 'Explain the winning strategy'"):
-        # Log input prompt
-        with st.chat_message("user"):
-            st.markdown(user_query)
+    if user_query := st.chat_input("Ask Pit Wall..."):
+        with st.chat_message("user"): st.markdown(user_query)
         st.session_state.chat_history.append({"role": "user", "content": user_query})
 
-        # Process rule-based engineering query parser
         query_clean = user_query.lower()
         ai_response = ""
 
-        if "who is leading" in query_clean or "championship leader" in query_clean:
-            top_driver = DRIVERS_STANDINGS_2026[0]
-            top_team = CONSTRUCTORS_STANDINGS_2026[0]
-            ai_response = f"**Championship Standing Verification:** Currently, **{top_driver['Driver']}** dominates the Driver Standings leading with **{top_driver['Points']} points** matching Mercedes power vectors. Over in the team stalls, **{top_team['Team']}** leads the Constructors with **{top_team['Points']} points**."
-        
-        elif "strategy" in query_clean or "winning plan" in query_clean or "pit window" in query_clean:
-            ai_response = f"**Strategy Prediction Matrix:** Based on current calculations for **{winner['driver']}**, our structural simulation recommends a **{winner['Recommended_Strategy']}** scheme. Target window options point to **{winner['Target_Pit_Window']}** to execution point, protecting against a tactical field offset."
-        
-        elif "winner" in query_clean or "predicted" in query_clean or "win" in query_clean:
-            ai_response = f"**Simulation Output:** Our predictive models show **{winner['driver']}** scaling for an optimal finish today for **{winner['team']}**, pulling a positive performance coefficient over the course of the session."
-        
-        elif "track" in query_clean or "temp" in query_clean or "weather" in query_clean:
-            ai_response = f"**Environmental Parameters:** We are currently operating under **{weather_state}** rules with track layout temps registering at **{track_temp}°C**. Performance thresholds on tire compounds are highly volatile at this range."
-        
-        elif "overtaker" in query_clean or "positions" in query_clean or "gained" in query_clean:
-            if charger['Net_Positions_Gained'] > 0:
-                ai_response = f"**Field Progression Target:** Keep an eye on **{charger['driver']}** starting back from P{int(charger['grid_start'])}. Telemetry outputs index them finishing around P{int(charger['Projected_Finish'])}, a net variation of **+{int(charger['Net_Positions_Gained'])} spots**."
-            else:
-                ai_response = "**Field Progression Target:** Current session coefficients indicate highly static tracks. Minimal overtaking delta shifts are anticipated inside this specific grid framework."
-        
+        if "who is leading" in query_clean:
+            ai_response = f"**Championship Standings Context:** Currently, **{DRIVERS_STANDINGS_2026[0]['Driver']}** dominates the driver table layout leading with **{DRIVERS_STANDINGS_2026[0]['Points']} points**."
+        elif "strategy" in query_clean:
+            ai_response = f"**Strategy Prediction Matrix:** Based on computations for **{winner['driver']}**, our simulation recommends a **{winner['Recommended_Strategy']}** scheme."
         else:
-            ai_response = f"Copy that, driver. Your comment noted. Telemetry models processing track data show **{winner['driver']}** maintains the dominant pace profile here at **{api_payload['circuit_short']}**, ahead of **{df_field.iloc[1]['driver']}** on adjusted race trim models. Let me know if you need specific driver gaps or championship point counts."
+            ai_response = f"Copy that, driver. Data processing frames confirm **{winner['driver']}** maintains optimal pace vectors here at **{api_payload['circuit_short']}**."
 
-        # Render processed AI engineer output block
-        with st.chat_message("assistant"):
-            st.markdown(ai_response)
+        with st.chat_message("assistant"): st.markdown(ai_response)
         st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
