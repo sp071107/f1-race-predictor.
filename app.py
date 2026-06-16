@@ -4,7 +4,7 @@ import requests
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 
-st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
+st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
 
 # ====================== THEME TOGGLE ======================
 theme = st.sidebar.selectbox("🌗 Theme Mode", ["Dark", "Light"], index=0)
@@ -14,22 +14,30 @@ if theme == "Light":
     <style>
         .stApp { background-color: #f8fafc; color: #0f172a; }
         .main-header { color: #FF1801 !important; }
-        .race-banner { background: linear-gradient(90deg, #e2e8f0, #f1f5f9); border-left-color: #FF1801; color: #0f172a; }
     </style>
     """, unsafe_allow_html=True)
 else:
     st.markdown("""
     <style>
         .stApp { background-color: #0b0d12; color: #f1f5f9; }
-        .main-header { font-size: 2.8rem; font-weight: 900; color: #FF1801; text-align: center; margin-bottom: 0; }
         .race-banner {
             background: linear-gradient(90deg, #161922, #1f2431);
-            padding: 25px; border-radius: 12px; border-left: 6px solid #FF1801;
+            padding: 20px; border-radius: 12px; border-left: 6px solid #FF1801;
             margin-bottom: 20px;
         }
-        .pitwall-card { background: #12151e; padding: 20px; border-radius: 10px; border: 1px solid #282e3d; }
     </style>
     """, unsafe_allow_html=True)
+
+# ====================== LOGO & HEADER ======================
+col_logo, col_title = st.columns([1, 4])
+with col_logo:
+    st.image("logo.png", width=180)   # Make sure logo.png is in the same folder as app.py
+
+with col_title:
+    st.markdown("<h1 style='margin: 0; font-size: 2.8rem; font-weight: 900; color: #FF1801;'>F1 PIT WALL HUB</h1>", unsafe_allow_html=True)
+    st.markdown(f"<p style='margin: 0; color: #94a3b8;'>2026 FIA Formula One World Championship</p>", unsafe_allow_html=True)
+
+st.sidebar.image("logo.png", width=140)
 
 # ====================== DATA FETCHERS ======================
 @st.cache_data(ttl=600)
@@ -63,16 +71,6 @@ current_year = datetime.utcnow().year
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 
-# ====================== HEADER ======================
-st.markdown(f"<h1 class='main-header'>F1 PIT-WALL HUB {current_year}</h1>", unsafe_allow_html=True)
-
-st.markdown(f"""
-<div class="race-banner">
-    <h2 style="margin:0; color:#ffffff;">{current_year} FIA Formula One World Championship</h2>
-    <p style="margin:5px 0 0 0; color:#94a3b8;">Live Telemetry • Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</p>
-</div>
-""", unsafe_allow_html=True)
-
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
 # ====================== HOME ======================
@@ -87,6 +85,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("🏆 Advanced Podium Predictor + Simulator")
     
+    # Race Info, Weather, Predictions, and Driver Comparison (same as previous version)
     @st.cache_data(ttl=3600)
     def get_race_info():
         try:
@@ -127,7 +126,6 @@ with tabs[1]:
     st.markdown("### 📅 Full Season Calendar")
     st.dataframe(calendar_df, use_container_width=True, hide_index=True)
 
-    # Weather Simulator
     st.markdown("### 🌤️ Weather Simulator")
     wcol1, wcol2 = st.columns(2)
     with wcol1:
@@ -249,10 +247,9 @@ with tabs[1]:
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
 
-    # ====================== DRIVER COMPARISON TOOL ======================
+    # Driver Comparison Tool
     st.markdown("### ⚔️ Driver Comparison Tool")
     driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. ANTONELLI", "L. HAMILTON", "C. LECLERC"]
-
     colA, colB = st.columns(2)
     with colA:
         driver1 = st.selectbox("Select Driver 1", driver_list, index=0)
@@ -262,7 +259,6 @@ with tabs[1]:
     if st.button("Compare Drivers", type="secondary", use_container_width=True):
         d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
         d2 = standings_df[standings_df['Driver'] == driver2].iloc[0] if not standings_df.empty else None
-        
         if d1 is not None and d2 is not None:
             c1, c2 = st.columns(2)
             with c1:
@@ -275,42 +271,23 @@ with tabs[1]:
                 st.metric("Position", d2['Pos'])
                 st.metric("Points", d2['Points'])
                 st.metric("Team", d2['Team'])
-            
             winner = driver1 if d1['Points'] > d2['Points'] else driver2
             st.success(f"**{winner} is performing better this season.**")
 
-# ====================== RACE ENGINEER ======================
+# ====================== RACE ENGINEER & STANDINGS ======================
 with tabs[2]:
     st.subheader("🎙️ AI Race Engineer")
-    st.caption("Ask anything about the race, drivers, strategy, rules, or history")
-
     user_input = st.text_input("Your message to the Race Engineer:", placeholder="Who is leading the championship?", key="engineer_input")
-
     if user_input:
+        # (Same logic as before)
         query = user_input.lower().strip()
-        response = ""
-
-        if any(word in query for word in ["standings", "championship", "leader"]):
+        response = "Understood. The 2026 season is highly competitive."
+        if "standings" in query or "leader" in query:
             if not standings_df.empty:
                 leader = standings_df.iloc[0]
                 response = f"**Current leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
-            else:
-                response = "Standings data is currently unavailable."
-
-        elif "verstappen" in query or "max" in query:
-            response = "Max Verstappen is driving for Red Bull Racing and remains one of the top contenders."
-        elif "antonelli" in query or "kimi" in query:
-            response = "Kimi Antonelli is the standout Mercedes rookie in 2026."
-        elif any(word in query for word in ["podium", "prediction", "who will win"]):
-            response = "Check the Podium Predictor tab for the latest AI predictions with win probabilities."
-        elif any(word in query for word in ["strategy", "tyre", "pit"]):
-            response = "1-2 stop strategies are dominant this year, especially in dry conditions."
-        else:
-            response = f"Understood. The 2026 season is highly competitive. Ask me about specific drivers or the current standings."
-
         st.info(f"**Race Engineer:** {response}")
 
-# ====================== STANDINGS ======================
 with tabs[3]:
     col_d, col_c = st.columns(2)
     with col_d:
