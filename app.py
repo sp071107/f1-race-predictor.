@@ -109,13 +109,12 @@ with tabs[0]:
 
 # ====================== PREDICTOR ======================
 # ====================== PREDICTOR TAB ======================
-# ====================== PREDICTOR TAB ======================
 with tabs[1]:
-    st.subheader("📍 Next Race & AI Strategy Predictor")
+    st.subheader("🏆 Podium-Focused AI Strategy Predictor")
     
     current_year = datetime.utcnow().year
 
-    # Get Next Race + Calendar
+    # Get Next Race + Calendar (unchanged)
     @st.cache_data(ttl=3600)
     def get_race_info():
         try:
@@ -148,13 +147,11 @@ with tabs[1]:
                                    "date": "TBD", "location": "Unknown"}, calendar_df
         except:
             pass
-        # Fallback
         return {"round": 1, "name": "Spanish Grand Prix", "circuit": "catalunya", 
                 "date": "2026-06-14", "location": "Barcelona, Spain"}, pd.DataFrame()
 
     next_race, calendar_df = get_race_info()
 
-    # Display Next Race
     col1, col2 = st.columns([1, 3])
     with col1:
         st.metric("Next Race", next_race["name"])
@@ -163,19 +160,17 @@ with tabs[1]:
         st.caption(f"**Date:** {next_race['date']}  |  **Location:** {next_race['location']}")
         st.caption(f"**Circuit:** {next_race['circuit'].replace('_', ' ').title()}")
 
-    # Full Calendar
-    st.markdown("### 📅 Full 2026 Season Calendar")
+    st.markdown("### 📅 Full Season Calendar")
     st.dataframe(calendar_df, use_container_width=True, hide_index=True)
 
-    # ================== IMPROVED PREDICTION ENGINE ==================
-    if st.button("🔮 Generate AI Predictions for Next Race", type="primary", use_container_width=True):
-        with st.spinner("Training model + generating predictions... (this may take 10-20 seconds first time)"):
+    # ================== PODIUM-FOCUSED PREDICTION ENGINE ==================
+    if st.button("🔮 Generate Podium Predictions", type="primary", use_container_width=True):
+        with st.spinner("Analyzing historical data + generating podium predictions..."):
             try:
-                # === Train / Load Model On-Demand ===
                 @st.cache_resource
                 def train_model():
                     all_data = []
-                    for year in range(2016, current_year):
+                    for year in range(2016, current_year + 1):  # include current if available
                         try:
                             r = requests.get(f"https://api.jolpi.ca/ergast/f1/{year}/results.json?limit=1000", timeout=8)
                             if r.status_code == 200:
@@ -194,9 +189,8 @@ with tabs[1]:
                             continue
                     
                     df = pd.DataFrame(all_data)
-                    if df.empty:
-                        st.error("Could not load historical data")
-                        return None, None, None, None
+                    if len(df) < 100:
+                        st.warning("Limited historical data – predictions may be less accurate.")
                     
                     le_c = LabelEncoder().fit(df['circuit'].unique())
                     le_d = LabelEncoder().fit(df['driver'].unique())
@@ -207,24 +201,23 @@ with tabs[1]:
                     df['const_enc'] = le_const.transform(df['constructor'])
                     
                     from sklearn.ensemble import RandomForestRegressor
-                    model = RandomForestRegressor(n_estimators=150, max_depth=10, random_state=42, n_jobs=-1)
+                    model = RandomForestRegressor(n_estimators=200, max_depth=12, random_state=42, n_jobs=-1)
                     X = df[['year', 'round', 'c_enc', 'd_enc', 'const_enc', 'grid']]
                     y = df['finish']
                     model.fit(X, y)
-                    
                     return model, le_c, le_d, le_const
 
                 model, le_c, le_d, le_const = train_model()
 
-                # Team strength bias (makes predictions more realistic)
+                # Stronger podium-focused team bias
                 team_bias = {
-                    "Mercedes": -1.8, "Ferrari": -1.2, "McLaren": -0.9,
-                    "Red Bull Racing": 0.4, "Aston Martin": 1.3, "Alpine": 2.1,
-                    "Williams": 2.4, "Haas F1 Team": 2.6, "Audi": 1.7,
-                    "Cadillac": 2.9, "Racing Bulls": 2.2
+                    "Mercedes": -2.2, "Ferrari": -1.7, "McLaren": -1.3,
+                    "Red Bull Racing": 0.3, "Aston Martin": 1.4, "Alpine": 2.3,
+                    "Williams": 2.6, "Haas F1 Team": 2.8, "Audi": 1.9,
+                    "Cadillac": 3.0, "Racing Bulls": 2.4, "RB F1 Team": 2.4
                 }
 
-                # Get Qualifying Grid
+                # Get current grid
                 grid_list = []
                 try:
                     q_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{next_race['round']}/qualifying.json"
@@ -239,7 +232,6 @@ with tabs[1]:
                                 "grid": int(entry['position'])
                             })
                 except:
-                    # Fallback: Use current championship order
                     standings = get_current_standings(current_year)
                     for i, row in standings.iterrows():
                         grid_list.append({
@@ -254,14 +246,14 @@ with tabs[1]:
                 for entry in grid_list[:22]:
                     try:
                         circ_enc = le_c.transform([next_race["circuit"]])[0] if next_race["circuit"] in le_c.classes_ else 0
-                        d_enc = le_d.transform([entry["d_id"]])[0] if entry["d_id"] in le_d.classes_ else le_d.transform([le_d.classes_[0]])[0]
-                        const_enc = le_const.transform([entry["team"].lower().replace(" ", "_")])[0] if any(entry["team"].lower() in c.lower() for c in le_const.classes_) else 0
+                        d_enc = le_d.transform([entry["d_id"]])[0] if entry["d_id"] in le_d.classes_ else 0
+                        const_enc = le_const.transform([entry.get("team", "").lower().replace(" ", "_")])[0] if any(entry["team"].lower() in c.lower() for c in le_const.classes_) else 0
 
                         base_pred = model.predict([[current_year, next_race["round"], circ_enc, d_enc, const_enc, entry["grid"]]])[0]
 
-                        # Accuracy Boost
-                        bias = team_bias.get(entry["team"], 1.5)
-                        adjusted = base_pred + bias * 0.55 + (entry["grid"] - 5) * 0.22
+                        # Podium-tuned adjustment
+                        bias = team_bias.get(entry["team"], 2.0)
+                        adjusted = base_pred + bias * 0.65 + (entry["grid"] - 3) * 0.18
                         final_pos = max(1, min(20, int(round(adjusted))))
 
                         predictions.append({
@@ -277,17 +269,30 @@ with tabs[1]:
                 pred_df = pd.DataFrame(predictions)
                 pred_df = pred_df.sort_values("Predicted Finish").reset_index(drop=True)
 
-                st.success(f"✅ Predictions for **{next_race['name']}** Generated!")
+                # === PODIUM HIGHLIGHT ===
+                st.success(f"🏆 Podium Predictions for **{next_race['name']}**")
+                
+                podium = pred_df.head(3)
+                cols = st.columns(3)
+                for i, (_, driver) in enumerate(podium.iterrows()):
+                    with cols[i]:
+                        pos_emoji = ["🥇", "🥈", "🥉"][i]
+                        st.markdown(f"""
+                        <div style="text-align:center; padding:15px; background:#1a1e2a; border-radius:10px; border:2px solid #FF1801;">
+                            <h2>{pos_emoji} P{i+1}</h2>
+                            <h3>{driver['Driver']}</h3>
+                            <p>{driver['Team']}</p>
+                            <small>From P{driver['Grid']}</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                # Full Table
+                st.markdown("### Full Grid Predictions")
                 st.dataframe(pred_df, use_container_width=True, hide_index=True)
 
-                # Highlights
-                winner = pred_df.iloc[0]
-                st.markdown(f"**🏆 Predicted Winner: {winner['Driver']}** ({winner['Team']}) from P{winner['Grid']}")
-
             except Exception as e:
-                st.error(f"Prediction failed: {str(e)}")
-                st.info("This usually happens on first run due to API limits. Try again in a few seconds.")
-
+                st.error(f"Error: {str(e)}")
+                st.info("Try again in a moment – first run can take longer due to data loading.")
 # ====================== RACE ENGINEER (Improved) ======================
 with tabs[2]:
     st.subheader("🎙️ AI Race Engineer")
