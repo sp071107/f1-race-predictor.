@@ -228,32 +228,46 @@ with tabs[1]:
                             grid_list.append({
                                 "driver": f"{entry['Driver']['givenName']} {
 # ====================== RACE ENGINEER (Improved) ======================
+# ====================== RACE ENGINEER TAB ======================
 with tabs[2]:
     st.subheader("🎙️ AI Race Engineer")
-    user_input = st.text_input("Ask anything about F1, drivers, strategy, rules, history...", key="engineer")
+    st.caption("Ask anything about the race, drivers, strategy, rules, or history")
+
+    user_input = st.text_input("Your message to the Race Engineer:", placeholder="Who is leading the championship?", key="engineer_input")
 
     if user_input:
         query = user_input.lower().strip()
-        response = "Understood. Let me check the latest telemetry..."
+        response = ""
 
-        # Enhanced intelligence
-        if any(x in query for x in ["standings", "championship", "leader"]):
+        # Smart responses using live data
+        if any(word in query for word in ["standings", "championship", "leader", "who is leading"]):
             if not standings_df.empty:
                 leader = standings_df.iloc[0]
-                response = f"**Current Drivers' Champion leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
+                response = f"**Current Drivers' Championship leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
             else:
-                response = "Standings data temporarily unavailable."
+                response = "Standings data is currently unavailable."
 
-        elif "verstappen" in query:
-            response = "Max Verstappen is driving for Red Bull Racing. He is a 4x World Champion known for his aggressive style."
+        elif "verstappen" in query or "max" in query:
+            response = "Max Verstappen is currently driving for Red Bull Racing. He remains one of the most dominant drivers in recent F1 history."
+
         elif "antonelli" in query or "kimi" in query:
-            response = "Kimi Antonelli is the current sensation at Mercedes – highly rated rookie with pole positions already."
-        elif any(x in query for x in ["strategy", "tyre", "pit"]):
-            response = "Optimal strategy depends on track temp, tyre degradation, and safety car probability. Most races this year favor 1-2 stop strategies."
-        elif "rules" in query or "what is" in query:
-            response = "F1 rules: DRS, ERS, Parc Fermé, 107% rule... Ask me something specific!"
+            response = "Kimi Antonelli is the exciting young Mercedes driver. He's been performing strongly in 2026."
+
+        elif any(word in query for word in ["podium", "prediction", "who will win"]):
+            response = "According to our AI model, the predicted podium is available in the Strategy Predictor tab. Would you like me to summarize it?"
+
+        elif any(word in query for word in ["strategy", "tyre", "pit stop", "one stop"]):
+            response = "Most teams are favoring 1-2 stop strategies this season depending on track temperature and tyre wear. Mercedes and Ferrari have been very efficient on tyre management."
+
+        elif "weather" in query:
+            response = "Weather plays a huge role. Dry conditions favor the top teams, while rain can create big opportunities for midfield drivers."
+
+        elif "rules" in query or "what is drs" in query or "ers" in query:
+            response = "DRS = Drag Reduction System (overtaking aid). ERS = Energy Recovery System (power boost). Both are key to modern F1 strategy."
+
         else:
-            response = f"Telemetry note on '{user_input}': Current season is very competitive. Mercedes and Ferrari are fighting at the front."
+            # Generic smart fallback
+            response = f"Got it — '{user_input}'. The 2026 season is incredibly competitive with Mercedes and Ferrari fighting at the front. Anything specific you'd like to know?"
 
         st.info(f"**Race Engineer:** {response}")
 
