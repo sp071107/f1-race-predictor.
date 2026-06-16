@@ -9,43 +9,43 @@
         "grid": 2,
         "driver": "Isack Hadjar",
         "team": "Red Bull Racing",
-        "predicted_finish": 2.8
+        "predicted_finish": 3.1
     },
     {
         "grid": 3,
         "driver": "Sergio Perez",
         "team": "Cadillac",
-        "predicted_finish": 4.4
+        "predicted_finish": 4.3
     },
     {
         "grid": 4,
         "driver": "Valtteri Bottas",
         "team": "Cadillac",
-        "predicted_finish": 7.3
+        "predicted_finish": 6.8
     },
     {
         "grid": 5,
         "driver": "Yuki Tsunoda",
         "team": "Racing Bulls (RB)",
-        "predicted_finish": 8.8
+        "predicted_finish": 9.4
     },
     {
         "grid": 6,
         "driver": "Arvid Lindblad",
         "team": "Racing Bulls (RB)",
-        "predicted_finish": 5.9
+        "predicted_finish": 5.8
     },
     {
         "grid": 7,
         "driver": "George Russell",
         "team": "Mercedes",
-        "predicted_finish": 7.1
+        "predicted_finish": 6.2
     },
     {
         "grid": 8,
         "driver": "Kimi Antonelli",
         "team": "Mercedes",
-        "predicted_finish": 9.2
+        "predicted_finish": 8.8
     },
     {
         "grid": 9,
@@ -57,66 +57,66 @@
         "grid": 10,
         "driver": "Charles Leclerc",
         "team": "Ferrari",
-        "predicted_finish": 9.7
+        "predicted_finish": 8.9
     },
     {
         "grid": 11,
         "driver": "Lando Norris",
         "team": "McLaren",
-        "predicted_finish": 10.9
+        "predicted_finish": 8.6
     },
     {
         "grid": 12,
         "driver": "Oscar Piastri",
         "team": "McLaren",
-        "predicted_finish": 9.6
+        "predicted_finish": 8.8
     },
     {
         "grid": 13,
         "driver": "Fernando Alonso",
         "team": "Aston Martin",
-        "predicted_finish": 13.1
+        "predicted_finish": 12.2
     },
     {
         "grid": 14,
         "driver": "Lance Stroll",
         "team": "Aston Martin",
-        "predicted_finish": 12.6
+        "predicted_finish": 12.4
     },
     {
         "grid": 15,
         "driver": "Pierre Gasly",
         "team": "Alpine",
-        "predicted_finish": 14.2
+        "predicted_finish": 14.6
     },
     {
         "grid": 16,
         "driver": "Esteban Ocon",
         "team": "Haas",
-        "predicted_finish": 13.7
+        "predicted_finish": 13.8
     },
     {
         "grid": 17,
         "driver": "Oliver Bearman",
         "team": "Haas",
-        "predicted_finish": 13.0
+        "predicted_finish": 12.7
     },
     {
         "grid": 18,
         "driver": "Alex Albon",
         "team": "Williams",
-        "predicted_finish": 11.6
+        "predicted_finish": 12.0
     },
     {
         "grid": 19,
         "driver": "Carlos Sainz",
         "team": "Williams",
-        "predicted_finish": 16.0
+        "predicted_finish": 16.3
     },
     {
         "grid": 20,
         "driver": "Nico Hulkenberg",
         "team": "Audi",
-        "predicted_finish": 16.0
+        "predicted_finish": 15.6
     }
 ]
