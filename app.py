@@ -6,19 +6,30 @@ from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
 
-# ====================== STYLING ======================
-st.markdown("""
-<style>
-    .stApp { background-color: #0b0d12; color: #f1f5f9; }
-    .main-header { font-size: 2.8rem; font-weight: 900; color: #FF1801; text-align: center; margin-bottom: 0; }
-    .race-banner {
-        background: linear-gradient(90deg, #161922, #1f2431);
-        padding: 25px; border-radius: 12px; border-left: 6px solid #FF1801;
-        margin-bottom: 20px;
-    }
-    .pitwall-card { background: #12151e; padding: 20px; border-radius: 10px; border: 1px solid #282e3d; }
-</style>
-""", unsafe_allow_html=True)
+# ====================== THEME TOGGLE ======================
+theme = st.sidebar.selectbox("🌗 Theme Mode", ["Dark", "Light"], index=0)
+
+if theme == "Light":
+    st.markdown("""
+    <style>
+        .stApp { background-color: #f8fafc; color: #0f172a; }
+        .main-header { color: #FF1801 !important; }
+        .race-banner { background: linear-gradient(90deg, #e2e8f0, #f1f5f9); border-left-color: #FF1801; color: #0f172a; }
+    </style>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+    <style>
+        .stApp { background-color: #0b0d12; color: #f1f5f9; }
+        .main-header { font-size: 2.8rem; font-weight: 900; color: #FF1801; text-align: center; margin-bottom: 0; }
+        .race-banner {
+            background: linear-gradient(90deg, #161922, #1f2431);
+            padding: 25px; border-radius: 12px; border-left: 6px solid #FF1801;
+            margin-bottom: 20px;
+        }
+        .pitwall-card { background: #12151e; padding: 20px; border-radius: 10px; border: 1px solid #282e3d; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # ====================== DATA FETCHERS ======================
 @st.cache_data(ttl=600)
@@ -28,22 +39,12 @@ def get_current_standings(year):
         resp = requests.get(url, timeout=8)
         if resp.status_code == 200:
             data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
-            drivers = []
-            for d in data:
-                drivers.append({
-                    "Pos": int(d['position']),
-                    "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}",
-                    "Team": d['Constructors'][0]['name'],
-                    "Points": int(d['points'])
-                })
+            drivers = [{"Pos": int(d['position']), "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}", 
+                       "Team": d['Constructors'][0]['name'], "Points": int(d['points'])} for d in data]
             return pd.DataFrame(drivers)
     except:
         pass
-    # Fallback
-    return pd.DataFrame([
-        {"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156},
-        {"Pos": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Points": 90},
-    ])
+    return pd.DataFrame([{"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156}])
 
 @st.cache_data(ttl=600)
 def get_constructor_standings(year):
@@ -52,13 +53,7 @@ def get_constructor_standings(year):
         resp = requests.get(url, timeout=8)
         if resp.status_code == 200:
             data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['ConstructorStandings']
-            cons = []
-            for c in data:
-                cons.append({
-                    "Pos": int(c['position']),
-                    "Team": c['Constructor']['name'],
-                    "Points": int(c['points'])
-                })
+            cons = [{"Pos": int(c['position']), "Team": c['Constructor']['name'], "Points": int(c['points'])} for c in data]
             return pd.DataFrame(cons)
     except:
         pass
@@ -68,7 +63,7 @@ current_year = datetime.utcnow().year
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 
-# ====================== MAIN HEADER ======================
+# ====================== HEADER ======================
 st.markdown(f"<h1 class='main-header'>F1 PIT-WALL HUB {current_year}</h1>", unsafe_allow_html=True)
 
 st.markdown(f"""
@@ -80,22 +75,18 @@ st.markdown(f"""
 
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
-# ====================== HOME TAB ======================
+# ====================== HOME ======================
 with tabs[0]:
     st.markdown("### Weekend Overview")
     col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Championship Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
-    with col2:
-        st.metric("Constructors Leader", cons_df.iloc[0]['Team'] if not cons_df.empty else "N/A")
-    with col3:
-        st.metric("Races Completed", len(standings_df))
+    with col1: st.metric("Championship Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
+    with col2: st.metric("Constructors Leader", cons_df.iloc[0]['Team'] if not cons_df.empty else "N/A")
+    with col3: st.metric("Races Completed", len(standings_df))
 
-# ====================== PODIUM PREDICTOR TAB ======================
+# ====================== PODIUM PREDICTOR ======================
 with tabs[1]:
     st.subheader("🏆 Advanced Podium Predictor + Simulator")
     
-    # Next Race Info
     @st.cache_data(ttl=3600)
     def get_race_info():
         try:
@@ -116,10 +107,8 @@ with tabs[1]:
                         }
                         break
                 calendar_df = pd.DataFrame([{
-                    "Round": r['round'],
-                    "Grand Prix": r['raceName'],
-                    "Circuit": r['Circuit']['circuitId'].replace('_', ' ').title(),
-                    "Date": r['date']
+                    "Round": r['round'], "Grand Prix": r['raceName'],
+                    "Circuit": r['Circuit']['circuitId'].replace('_', ' ').title(), "Date": r['date']
                 } for r in races])
                 return next_race or {"round":1,"name":"Next GP","circuit":"catalunya","date":"TBD","location":"Unknown"}, calendar_df
         except:
@@ -134,22 +123,20 @@ with tabs[1]:
         st.metric("Round", next_race["round"])
     with col2:
         st.caption(f"**Date:** {next_race['date']} | **Location:** {next_race['location']}")
-        st.caption(f"**Circuit:** {next_race['circuit'].replace('_', ' ').title()}")
 
     st.markdown("### 📅 Full Season Calendar")
     st.dataframe(calendar_df, use_container_width=True, hide_index=True)
 
     # Weather Simulator
     st.markdown("### 🌤️ Weather Simulator")
-    weather_col1, weather_col2 = st.columns(2)
-    with weather_col1:
+    wcol1, wcol2 = st.columns(2)
+    with wcol1:
         weather = st.selectbox("Track Conditions", ["Dry", "Light Rain", "Heavy Rain", "Hot & Dry"], index=0)
-    with weather_col2:
+    with wcol2:
         track_temp = st.slider("Track Temperature (°C)", 20, 60, 38)
 
-    # Prediction Engine
     if st.button("🔮 Generate Podium Predictions", type="primary", use_container_width=True):
-        with st.spinner("Training model + running simulations..."):
+        with st.spinner("Training model + generating predictions..."):
             try:
                 @st.cache_resource
                 def train_model():
@@ -185,9 +172,9 @@ with tabs[1]:
                     X = df[['year', 'round', 'c_enc', 'd_enc', 'const_enc', 'grid']]
                     y = df['finish']
                     model.fit(X, y)
-                    return model, le_c, le_d, le_const, df
+                    return model, le_c, le_d, le_const
 
-                model, le_c, le_d, le_const, _ = train_model()
+                model, le_c, le_d, le_const = train_model()
 
                 team_bias = {"Mercedes": -2.3, "Ferrari": -1.8, "McLaren": -1.4, "Red Bull Racing": 0.4,
                             "Aston Martin": 1.5, "Alpine": 2.4, "Williams": 2.7, "Haas F1 Team": 2.9,
@@ -196,7 +183,6 @@ with tabs[1]:
                 weather_factor = {"Dry": 1.0, "Light Rain": 1.15, "Heavy Rain": 1.35, "Hot & Dry": 0.9}
                 temp_factor = (track_temp - 38) * 0.015
 
-                # Get grid
                 grid_list = []
                 try:
                     q_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{next_race['round']}/qualifying.json"
@@ -237,9 +223,8 @@ with tabs[1]:
 
                 pred_df = pd.DataFrame(predictions).sort_values("Predicted Finish").reset_index(drop=True)
 
-                # Podium Display
-                st.success(f"🏆 Podium Predictions for **{next_race['name']}** ({weather})")
-                
+                st.success(f"🏆 Podium Predictions for **{next_race['name']}** ({weather} conditions)")
+
                 podium = pred_df.head(3).copy()
                 podium_scores = [1 / (p + 1) for p in podium["Predicted Finish"]]
                 total = sum(podium_scores)
@@ -263,9 +248,38 @@ with tabs[1]:
 
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
-                st.info("First run may take 15-25 seconds. Try again.")
 
-# ====================== RACE ENGINEER TAB ======================
+    # ====================== DRIVER COMPARISON TOOL ======================
+    st.markdown("### ⚔️ Driver Comparison Tool")
+    driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. ANTONELLI", "L. HAMILTON", "C. LECLERC"]
+
+    colA, colB = st.columns(2)
+    with colA:
+        driver1 = st.selectbox("Select Driver 1", driver_list, index=0)
+    with colB:
+        driver2 = st.selectbox("Select Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
+
+    if st.button("Compare Drivers", type="secondary", use_container_width=True):
+        d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
+        d2 = standings_df[standings_df['Driver'] == driver2].iloc[0] if not standings_df.empty else None
+        
+        if d1 is not None and d2 is not None:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**{driver1}**")
+                st.metric("Position", d1['Pos'])
+                st.metric("Points", d1['Points'])
+                st.metric("Team", d1['Team'])
+            with c2:
+                st.markdown(f"**{driver2}**")
+                st.metric("Position", d2['Pos'])
+                st.metric("Points", d2['Points'])
+                st.metric("Team", d2['Team'])
+            
+            winner = driver1 if d1['Points'] > d2['Points'] else driver2
+            st.success(f"**{winner} is performing better this season.**")
+
+# ====================== RACE ENGINEER ======================
 with tabs[2]:
     st.subheader("🎙️ AI Race Engineer")
     st.caption("Ask anything about the race, drivers, strategy, rules, or history")
@@ -276,34 +290,27 @@ with tabs[2]:
         query = user_input.lower().strip()
         response = ""
 
-        if any(word in query for word in ["standings", "championship", "leader", "who is leading"]):
+        if any(word in query for word in ["standings", "championship", "leader"]):
             if not standings_df.empty:
                 leader = standings_df.iloc[0]
-                response = f"**Current Drivers' Championship leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
+                response = f"**Current leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
             else:
                 response = "Standings data is currently unavailable."
 
         elif "verstappen" in query or "max" in query:
-            response = "Max Verstappen is currently driving for Red Bull Racing. He remains one of the most dominant drivers in recent F1 history."
-
+            response = "Max Verstappen is driving for Red Bull Racing and remains one of the top contenders."
         elif "antonelli" in query or "kimi" in query:
-            response = "Kimi Antonelli is the exciting young Mercedes driver. He's been performing strongly in 2026."
-
+            response = "Kimi Antonelli is the standout Mercedes rookie in 2026."
         elif any(word in query for word in ["podium", "prediction", "who will win"]):
-            response = "Check the Podium Predictor tab for the latest AI predictions including win probabilities."
-
+            response = "Check the Podium Predictor tab for the latest AI predictions with win probabilities."
         elif any(word in query for word in ["strategy", "tyre", "pit"]):
-            response = "Most teams are favoring 1-2 stop strategies this season depending on track temperature and tyre wear."
-
-        elif "weather" in query:
-            response = "Weather plays a huge role. Dry conditions favor the top teams, while rain can create big opportunities for midfield drivers."
-
+            response = "1-2 stop strategies are dominant this year, especially in dry conditions."
         else:
-            response = f"Got it — '{user_input}'. The 2026 season is very competitive with Mercedes and Ferrari fighting at the front."
+            response = f"Understood. The 2026 season is highly competitive. Ask me about specific drivers or the current standings."
 
         st.info(f"**Race Engineer:** {response}")
 
-# ====================== STANDINGS TAB ======================
+# ====================== STANDINGS ======================
 with tabs[3]:
     col_d, col_c = st.columns(2)
     with col_d:
