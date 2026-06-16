@@ -4,7 +4,6 @@ import requests
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 
-
 st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
 
 # ====================== STYLING ======================
@@ -17,16 +16,12 @@ st.markdown("""
         padding: 25px; border-radius: 12px; border-left: 6px solid #FF1801;
         margin-bottom: 20px;
     }
-    .metric-card {
-        background: #12151e; padding: 20px; border-radius: 10px;
-        border: 1px solid #282e3d; text-align: center;
-    }
-    .pitwall-card { background: #1a1e2a; padding: 18px; border-radius: 10px; border: 1px solid #282e3d; }
+    .pitwall-card { background: #12151e; padding: 20px; border-radius: 10px; border: 1px solid #282e3d; }
 </style>
 """, unsafe_allow_html=True)
 
 # ====================== DATA FETCHERS ======================
-@st.cache_data(ttl=600)  # 10 minutes
+@st.cache_data(ttl=600)
 def get_current_standings(year):
     try:
         url = f"https://api.jolpi.ca/ergast/f1/{year}/driverStandings.json"
@@ -44,10 +39,10 @@ def get_current_standings(year):
             return pd.DataFrame(drivers)
     except:
         pass
-    # Fallback 2026 data
+    # Fallback
     return pd.DataFrame([
         {"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156},
-        # ... (keep your existing fallback list)
+        {"Pos": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Points": 90},
     ])
 
 @st.cache_data(ttl=600)
@@ -67,26 +62,15 @@ def get_constructor_standings(year):
             return pd.DataFrame(cons)
     except:
         pass
-    # Your fallback here...
-    return pd.DataFrame([...])  # add your 2026 fallback
+    return pd.DataFrame([{"Pos": 1, "Team": "Mercedes", "Points": 244}])
 
-def get_live_grid():
-    try:
-        # OpenF1 or Ergast qualifying
-        resp = requests.get("https://api.openf1.org/v1/session_result?session_key=latest", timeout=6)
-        # Simplified - you can expand
-        return pd.DataFrame()  # placeholder for now
-    except:
-        return pd.DataFrame()
-
-# ====================== MAIN APP ======================
 current_year = datetime.utcnow().year
-st.markdown(f"<h1 class='main-header'>F1 PIT-WALL HUB {current_year}</h1>", unsafe_allow_html=True)
-
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 
-# Race Context Banner
+# ====================== MAIN HEADER ======================
+st.markdown(f"<h1 class='main-header'>F1 PIT-WALL HUB {current_year}</h1>", unsafe_allow_html=True)
+
 st.markdown(f"""
 <div class="race-banner">
     <h2 style="margin:0; color:#ffffff;">{current_year} FIA Formula One World Championship</h2>
@@ -94,26 +78,24 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["🏠 HOME", "📊 STRATEGY PREDICTOR", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
+tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
-# ====================== HOME ======================
+# ====================== HOME TAB ======================
 with tabs[0]:
     st.markdown("### Weekend Overview")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Current Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
+        st.metric("Championship Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
     with col2:
         st.metric("Constructors Leader", cons_df.iloc[0]['Team'] if not cons_df.empty else "N/A")
     with col3:
         st.metric("Races Completed", len(standings_df))
 
-# ====================== PREDICTOR TAB ======================
+# ====================== PODIUM PREDICTOR TAB ======================
 with tabs[1]:
     st.subheader("🏆 Advanced Podium Predictor + Simulator")
     
-    current_year = datetime.utcnow().year
-
-    # Get Next Race + Calendar
+    # Next Race Info
     @st.cache_data(ttl=3600)
     def get_race_info():
         try:
@@ -122,7 +104,6 @@ with tabs[1]:
             if resp.status_code == 200:
                 races = resp.json()['MRData']['RaceTable']['Races']
                 today = datetime.utcnow().date().isoformat()
-                
                 next_race = None
                 for race in races:
                     if race.get('date', '') >= today:
@@ -134,7 +115,6 @@ with tabs[1]:
                             "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}"
                         }
                         break
-                
                 calendar_df = pd.DataFrame([{
                     "Round": r['round'],
                     "Grand Prix": r['raceName'],
@@ -159,7 +139,7 @@ with tabs[1]:
     st.markdown("### 📅 Full Season Calendar")
     st.dataframe(calendar_df, use_container_width=True, hide_index=True)
 
-    # ================== WEATHER SIMULATOR ==================
+    # Weather Simulator
     st.markdown("### 🌤️ Weather Simulator")
     weather_col1, weather_col2 = st.columns(2)
     with weather_col1:
@@ -167,7 +147,7 @@ with tabs[1]:
     with weather_col2:
         track_temp = st.slider("Track Temperature (°C)", 20, 60, 38)
 
-    # ================== PREDICTION ENGINE ==================
+    # Prediction Engine
     if st.button("🔮 Generate Podium Predictions", type="primary", use_container_width=True):
         with st.spinner("Training model + running simulations..."):
             try:
@@ -207,9 +187,8 @@ with tabs[1]:
                     model.fit(X, y)
                     return model, le_c, le_d, le_const, df
 
-                model, le_c, le_d, le_const, historical_df = train_model()
+                model, le_c, le_d, le_const, _ = train_model()
 
-                # Team bias + weather adjustment
                 team_bias = {"Mercedes": -2.3, "Ferrari": -1.8, "McLaren": -1.4, "Red Bull Racing": 0.4,
                             "Aston Martin": 1.5, "Alpine": 2.4, "Williams": 2.7, "Haas F1 Team": 2.9,
                             "Audi": 2.0, "Cadillac": 3.1, "Racing Bulls": 2.5, "RB F1 Team": 2.5}
@@ -226,8 +205,66 @@ with tabs[1]:
                         results = q_resp.json()['MRData']['RaceTable']['Races'][0].get('QualifyingResults', [])
                         for entry in results:
                             grid_list.append({
-                                "driver": f"{entry['Driver']['givenName']} {
-# ====================== RACE ENGINEER (Improved) ======================
+                                "driver": f"{entry['Driver']['givenName']} {entry['Driver']['familyName']}",
+                                "d_id": entry['Driver']['driverId'],
+                                "team": entry['Constructor']['name'],
+                                "grid": int(entry['position'])
+                            })
+                except:
+                    for i, row in standings_df.iterrows():
+                        grid_list.append({"driver": row['Driver'], "d_id": row['Driver'].lower().replace(" ", "_"), 
+                                        "team": row['Team'], "grid": i+1})
+
+                predictions = []
+                for entry in grid_list[:22]:
+                    try:
+                        circ_enc = le_c.transform([next_race["circuit"]])[0] if next_race["circuit"] in le_c.classes_ else 0
+                        d_enc = le_d.transform([entry["d_id"]])[0] if entry["d_id"] in le_d.classes_ else 0
+                        const_enc = le_const.transform([entry["team"].lower().replace(" ", "_")])[0] if any(entry["team"].lower() in c.lower() for c in le_const.classes_) else 0
+
+                        base_pred = model.predict([[current_year, next_race["round"], circ_enc, d_enc, const_enc, entry["grid"]]])[0]
+
+                        bias = team_bias.get(entry["team"], 2.0)
+                        adjusted = base_pred + bias * 0.7 + (entry["grid"] - 3) * 0.2 + temp_factor
+                        final_pos = max(1, min(20, int(round(adjusted * weather_factor[weather]))))
+
+                        predictions.append({
+                            "Grid": entry["grid"], "Driver": entry["driver"], "Team": entry["team"],
+                            "Predicted Finish": final_pos, "Positions Gained": entry["grid"] - final_pos
+                        })
+                    except:
+                        continue
+
+                pred_df = pd.DataFrame(predictions).sort_values("Predicted Finish").reset_index(drop=True)
+
+                # Podium Display
+                st.success(f"🏆 Podium Predictions for **{next_race['name']}** ({weather})")
+                
+                podium = pred_df.head(3).copy()
+                podium_scores = [1 / (p + 1) for p in podium["Predicted Finish"]]
+                total = sum(podium_scores)
+                podium["Win Probability"] = [round((s / total) * 100, 1) for s in podium_scores]
+
+                cols = st.columns(3)
+                for i, (_, driver) in enumerate(podium.iterrows()):
+                    with cols[i]:
+                        pos_emoji = ["🥇", "🥈", "🥉"][i]
+                        st.markdown(f"""
+                        <div style="text-align:center; padding:15px; background:#1a1e2a; border-radius:10px; border:2px solid #FF1801;">
+                            <h2>{pos_emoji} P{i+1}</h2>
+                            <h3>{driver['Driver']}</h3>
+                            <p>{driver['Team']}</p>
+                            <small>From P{driver['Grid']} • {driver['Win Probability']}% Win Prob.</small>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                st.markdown("### Full Grid Predictions")
+                st.dataframe(pred_df, use_container_width=True, hide_index=True)
+
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                st.info("First run may take 15-25 seconds. Try again.")
+
 # ====================== RACE ENGINEER TAB ======================
 with tabs[2]:
     st.subheader("🎙️ AI Race Engineer")
@@ -239,7 +276,6 @@ with tabs[2]:
         query = user_input.lower().strip()
         response = ""
 
-        # Smart responses using live data
         if any(word in query for word in ["standings", "championship", "leader", "who is leading"]):
             if not standings_df.empty:
                 leader = standings_df.iloc[0]
@@ -254,24 +290,20 @@ with tabs[2]:
             response = "Kimi Antonelli is the exciting young Mercedes driver. He's been performing strongly in 2026."
 
         elif any(word in query for word in ["podium", "prediction", "who will win"]):
-            response = "According to our AI model, the predicted podium is available in the Strategy Predictor tab. Would you like me to summarize it?"
+            response = "Check the Podium Predictor tab for the latest AI predictions including win probabilities."
 
-        elif any(word in query for word in ["strategy", "tyre", "pit stop", "one stop"]):
-            response = "Most teams are favoring 1-2 stop strategies this season depending on track temperature and tyre wear. Mercedes and Ferrari have been very efficient on tyre management."
+        elif any(word in query for word in ["strategy", "tyre", "pit"]):
+            response = "Most teams are favoring 1-2 stop strategies this season depending on track temperature and tyre wear."
 
         elif "weather" in query:
             response = "Weather plays a huge role. Dry conditions favor the top teams, while rain can create big opportunities for midfield drivers."
 
-        elif "rules" in query or "what is drs" in query or "ers" in query:
-            response = "DRS = Drag Reduction System (overtaking aid). ERS = Energy Recovery System (power boost). Both are key to modern F1 strategy."
-
         else:
-            # Generic smart fallback
-            response = f"Got it — '{user_input}'. The 2026 season is incredibly competitive with Mercedes and Ferrari fighting at the front. Anything specific you'd like to know?"
+            response = f"Got it — '{user_input}'. The 2026 season is very competitive with Mercedes and Ferrari fighting at the front."
 
         st.info(f"**Race Engineer:** {response}")
 
-# ====================== STANDINGS ======================
+# ====================== STANDINGS TAB ======================
 with tabs[3]:
     col_d, col_c = st.columns(2)
     with col_d:
@@ -281,4 +313,4 @@ with tabs[3]:
         st.subheader("Constructor Standings")
         st.dataframe(cons_df, use_container_width=True, hide_index=True)
 
-st.caption("Data from Ergast / OpenF1 • Built with ❤️ for F1 fans")
+st.caption("Data from Ergast API • Built with ❤️ for F1 fans")
