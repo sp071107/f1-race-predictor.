@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import anthropic
 from datetime import datetime
 
 st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
