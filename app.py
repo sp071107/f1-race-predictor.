@@ -305,7 +305,6 @@ with tab_home:
         )
 
     # --- LIVE KPI CARDS ---
-    # --- LIVE KPI CARDS ---
     st.markdown("<h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>📋 CURRENT SESSION PROGRESSION METRICS</h3>", unsafe_allow_html=True)
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     
@@ -324,6 +323,7 @@ with tab_home:
     with kpi4:
         card_4 = '<div class="command-card" style="border-left: 4px solid #ff1801;"><div class="card-label">Championship P1</div><div class="card-main">K. ANTONELLI</div><div class="card-detail">Gap to P2: +66 Points</div></div>'
         st.markdown(card_4, unsafe_allow_html=True)
+
     # --- CHAMPIONSHIP STANDINGS OVERVIEW ---
     st.markdown("<br><h3 style='font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 15px;'>🏆 GLOBAL CHAMPIONSHIP STANDINGS OVERVIEW</h3>", unsafe_allow_html=True)
     standings_col1, standings_col2 = st.columns(2)
@@ -434,44 +434,53 @@ with tab_chatbot:
         unsafe_allow_html=True
     )
 
-    # Initialize chat state array if empty
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [{"role": "assistant", "content": "Copy that, driver. Comm channels clear. Telemetry logs compiled."}]
+        st.session_state.chat_history = [{"role": "assistant", "content": "Copy that, driver. Comm channels clear. Telemetry arrays parsed. Ask me about weather updates, driver strategies, or current standings."}]
 
-    # Render previous historical message iterations
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]): 
             st.markdown(message["content"])
 
-    # Ingest and process user stream tokens
     if user_query := st.chat_input("Ask Pit Wall..."):
-        # Append user text immediately to display array
-        st.session_state.chat_history.append({"role": "user", "content": user_query})
         with st.chat_message("user"): 
             st.markdown(user_query)
+        st.session_state.chat_history.append({"role": "user", "content": user_query})
 
         query_clean = user_query.lower()
-        
-        # --- KNOWLEDGE ROUTING CORE ---
-        if "who is leading" in query_clean or "leader" in query_clean:
-            ai_response = f"**Championship Standings Context:** Currently, **{DRIVERS_STANDINGS_2026[0]['Driver']}** dominates the driver table layout leading with **{DRIVERS_STANDINGS_2026[0]['Points']} points**."
-        
-        elif "strategy" in query_clean or "pit" in query_clean:
-            ai_response = f"**Strategy Prediction Matrix:** Based on computations for **{winner['driver']}**, our simulation recommends a **{winner['Recommended_Strategy']}** scheme."
-        
-        elif "toto" in query_clean or "wolff" in query_clean:
-            ai_response = "Team Principal update: Torger Christian 'Toto' Wolff is the CEO and 33% co-owner of the Mercedes-AMG PETRONAS F1 Team. Pit wall logs indicate his driver assets are executing cleanly."
-            
-        elif "antonelli" in query_clean:
-            ai_response = f"Telemetry alert: **K. ANTONELLI** currently leads the world championship table with **{DRIVERS_STANDINGS_2026[0]['Points']} points** for Mercedes."
-            
-        elif "russell" in query_clean:
-            ai_response = f"Data processing frames confirm **G. RUSSELL** maintains optimal pace vectors here at **{api_payload['circuit_short']}**."
-            
-        else:
-            ai_response = f"Copy that, driver. Message query logged. Telemetry frames indicate field operation variables are tracking nominal at **{api_payload['circuit_short']}**."
+        ai_response = ""
 
-        # Append assistant response token directly to history array state so it sticks on reload
-        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
+        # --- REVISE: LIVE RE-REACTIVE ENGINEERING CONTEXT PROCESSING ROUTER ---
+        # 1. Weather / Environmental Check
+        if any(w in query_clean for w in ["weather", "rain", "temp", "temperature", "asphalt"]):
+            ai_response = f"**Pit-Wall Environmental Telemetry:** Current simulation is configured for **{weather_state}** with track temperatures tracking at **{track_temp}°C**. Engine configurations are utilizing the **{ERS_mode}** setup."
+        
+        # 2. Driver Specific Strategy Query
+        elif any(d in query_clean for d in df_field['driver'].str.lower().tolist()):
+            # Find which driver the user asked about
+            matched_driver = None
+            for d in df_field['driver'].tolist():
+                if d.lower() in query_clean:
+                    matched_driver = d
+                    break
+            
+            row = df_field[df_field['driver'] == matched_driver].iloc[0]
+            ai_response = f"**Strategist Dossier for {row['driver']}:** Telemetry arrays project a finish of **P{int(row['Projected_Finish'])}** (Starting from P{int(row['grid_start'])}). Recommended deployment scheme: `{row['Recommended_Strategy']}` with strategic intent set to *{row['Strategic_Intent']}*. Target pit stop: **{row['Target_Pit_Window']}**."
+
+        # 3. Championship Context Query
+        elif any(c in query_clean for c in ["leader", "leading", "points", "standings", "championship", "leaderboard"]):
+            p1_driver = DRIVERS_STANDINGS_2026[0]
+            p2_driver = DRIVERS_STANDINGS_2026[1]
+            p1_team = CONSTRUCTORS_STANDINGS_2026[0]
+            ai_response = f"**Championship Tracking Frame:** **{p1_driver['Driver']}** ({p1_driver['Team']}) commands the Driver Standings with **{p1_driver['Points']} pts**, leading **{p2_driver['Driver']}** by {p1_driver['Points'] - p2_driver['Points']} points. In the constructor battle, **{p1_team['Team']}** leads with **{p1_team['Points']} pts**."
+        
+        # 4. Global Simulation Strategy Query
+        elif any(s in query_clean for s in ["strategy", "predict", "winner", "podium", "win"]):
+            ai_response = f"**Simulation Strategy Feed:** Simulation engine projects **{winner['driver']}** ({winner['team']}) executing a successful `{winner['Recommended_Strategy']}` to take victory at **{api_payload['circuit_short']}**."
+        
+        # 5. Default Fallback Context Response
+        else:
+            ai_response = f"Copy that, driver. Comm links verified at **{api_payload['circuit_short']}**. Telemetry charts arrayed: **{winner['driver']}** remains our P1 pace reference point, tracking a baseline strategy target window of **{winner['Target_Pit_Window']}**."
+
         with st.chat_message("assistant"): 
             st.markdown(ai_response)
+        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
