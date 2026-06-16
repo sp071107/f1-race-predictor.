@@ -2,461 +2,625 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import anthropic
+from datetime import datetime
 
-# Set page configuration immediately at boot
 st.set_page_config(page_title="F1 Pit-Wall Hub", page_icon="🏎️", layout="wide")
 
-# --- PREMIUM PIT-WALL TELEMETRY THEME INJECTION (CSS) ---
-st.markdown(
-    """
-    <style>
-    .stApp {
-        background-color: #0b0d12;
-        color: #f1f5f9;
-        font-family: 'Segoe UI', Monaco, monospace;
-    }
-    header {
-        border-top: 5px solid #FF1801 !important;
-    }
-    .race-context-banner {
-        background: linear-gradient(90deg, #161922 0%, #1f2431 100%);
-        border-left: 5px solid #FF1801;
-        border-radius: 6px;
-        padding: 22px;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-    }
-    .pitwall-card {
-        background: linear-gradient(135deg, #12151e 0%, #1a1e2a 100%);
-        border: 1px solid #282e3d;
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-        margin-bottom: 15px;
-    }
-    .welcome-box {
-        background: linear-gradient(135deg, #1a1c23 0%, #0d0e12 100%);
-        border: 1px solid #FF1801;
-        border-radius: 10px;
-        padding: 30px;
-        margin-bottom: 25px;
-    }
-    .stExpander {
-        background-color: #12151e !important;
-        border: 1px solid #232936 !important;
-        border-radius: 8px !important;
-    }
-    div[data-baseweb="tab-list"] {
-        gap: 12px;
-    }
-    div[data-baseweb="tab"] {
-        background-color: #161922 !important;
-        border: 1px solid #282e3d !important;
-        color: #94a3b8 !important;
-        border-radius: 6px 6px 0px 0px !important;
-        padding: 10px 20px !important;
-        font-weight: 700 !important;
-    }
-    div[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #FF1801 !important;
-        color: #ffffff !important;
-        border-color: #FF1801 !important;
-    }
-    div[data-baseweb="slider"] > div { background-color: #FF1801 !important; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# ──────────────────────────────────────────────
+# GLOBAL CSS
+# ──────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
 
-# --- PERFORMANCE COEFFICIENTS ---
-TEAM_META = {
-    "Mercedes": {"color": "#00A294", "base_pace_rank": 1.1},
-    "Ferrari": {"color": "#E80020", "base_pace_rank": 1.4},
-    "McLaren": {"color": "#FF8000", "base_pace_rank": 1.5},
-    "Red Bull Racing": {"color": "#3671C6", "base_pace_rank": 2.2},
-    "Alpine": {"color": "#0093CC", "base_pace_rank": 3.4},
-    "Racing Bulls": {"color": "#6692FF", "base_pace_rank": 3.8},
-    "Haas F1 Team": {"color": "#B6BABD", "base_pace_rank": 4.1},
-    "Williams": {"color": "#37BEDD", "base_pace_rank": 4.5},
-    "Audi": {"color": "#F50A23", "base_pace_rank": 5.2},
-    "Aston Martin": {"color": "#229971", "base_pace_rank": 5.5},
-    "Cadillac": {"color": "#DEB887", "base_pace_rank": 5.8}
+/* Base */
+.stApp { background-color: #080a0f; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+.block-container { padding-top: 1.5rem !important; max-width: 1400px; }
+header[data-testid="stHeader"] { background: #080a0f; border-bottom: 1px solid #1a1f2e; }
+
+/* Top accent bar */
+.stApp::before {
+    content: "";
+    display: block;
+    height: 3px;
+    background: linear-gradient(90deg, #FF1801 0%, #ff6b35 50%, #FF1801 100%);
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
 }
 
-# --- REAL-TIME CHAMPIONSHIP STANDINGS DATA SETS ---
-DRIVERS_STANDINGS_2026 = [
-    {"Pos": 1, "Driver": "K. ANTONELLI", "Team": "Mercedes", "Points": 156},
-    {"Pos": 2, "Driver": "L. HAMILTON", "Team": "Ferrari", "Points": 90},
-    {"Pos": 3, "Driver": "G. RUSSELL", "Team": "Mercedes", "Points": 88},
-    {"Pos": 4, "Driver": "C. LECLERC", "Team": "Ferrari", "Points": 75},
-    {"Pos": 5, "Driver": "O. PIASTRI", "Team": "McLaren", "Points": 58},
-    {"Pos": 6, "Driver": "L. NORRIS", "Team": "McLaren", "Points": 58},
-    {"Pos": 7, "Driver": "M. VERSTAPPEN", "Team": "Red Bull Racing", "Points": 43},
-    {"Pos": 8, "Driver": "P. GASLY", "Team": "Alpine", "Points": 35},
-    {"Pos": 9, "Driver": "I. HADJAR", "Team": "Red Bull Racing", "Points": 26},
-    {"Pos": 10, "Driver": "L. LAWSON", "Team": "Racing Bulls", "Points": 24},
-    {"Pos": 11, "Driver": "O. BEARMAN", "Team": "Haas F1 Team", "Points": 18},
-    {"Pos": 12, "Driver": "F. COLAPINTO", "Team": "Alpine", "Points": 15},
-    {"Pos": 13, "Driver": "A. LINDBLAD", "Team": "Racing Bulls", "Points": 11},
-    {"Pos": 14, "Driver": "C. SAINZ", "Team": "Williams", "Points": 6},
-    {"Pos": 15, "Driver": "A. ALBON", "Team": "Williams", "Points": 5},
-    {"Pos": 16, "Driver": "E. OCON", "Team": "Haas F1 Team", "Points": 3},
-    {"Pos": 17, "Driver": "G. BORTOLETO", "Team": "Audi", "Points": 2},
-    {"Pos": 18, "Driver": "F. ALONSO", "Team": "Aston Martin", "Points": 1},
-    {"Pos": 19, "Driver": "S. PEREZ", "Team": "Cadillac", "Points": 0},
-    {"Pos": 20, "Driver": "N. HULKENBERG", "Team": "Audi", "Points": 0},
-    {"Pos": 21, "Driver": "V. BOTTAS", "Team": "Cadillac", "Points": 0},
-    {"Pos": 22, "Driver": "L. STROLL", "Team": "Aston Martin", "Points": 0}
+/* Tabs */
+div[data-baseweb="tab-list"] { gap: 4px; background: #0d1017; border-bottom: 1px solid #1a1f2e; padding: 0 4px; }
+div[data-baseweb="tab"] {
+    background: transparent !important;
+    border: none !important;
+    border-bottom: 3px solid transparent !important;
+    color: #64748b !important;
+    border-radius: 0 !important;
+    padding: 14px 20px !important;
+    font-weight: 600 !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    transition: all 0.15s;
+}
+div[data-baseweb="tab"]:hover { color: #94a3b8 !important; }
+div[data-baseweb="tab"][aria-selected="true"] {
+    color: #ffffff !important;
+    border-bottom: 3px solid #FF1801 !important;
+}
+
+/* Cards */
+.card {
+    background: #0d1017;
+    border: 1px solid #1a1f2e;
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+    transition: border-color 0.2s;
+}
+.card:hover { border-color: #2a3144; }
+.card-label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #475569; margin-bottom: 6px; }
+.card-headline { font-size: 1.55rem; font-weight: 800; color: #f1f5f9; line-height: 1.15; }
+.card-sub { font-size: 0.82rem; color: #64748b; margin-top: 5px; font-family: 'JetBrains Mono', monospace; }
+
+/* Section header */
+.section-header {
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #475569;
+    border-bottom: 1px solid #1a1f2e;
+    padding-bottom: 10px; margin: 28px 0 16px 0;
+    display: flex; align-items: center; gap: 8px;
+}
+
+/* Hero banner */
+.hero-banner {
+    background: linear-gradient(135deg, #0d1017 0%, #111827 100%);
+    border: 1px solid #1a1f2e;
+    border-left: 4px solid #FF1801;
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+}
+
+/* Standings table wrapper */
+.standings-wrap { border-radius: 10px; overflow: hidden; border: 1px solid #1a1f2e; }
+
+/* Chat */
+.chat-bubble-user {
+    background: #1e2433;
+    border: 1px solid #2a3144;
+    border-radius: 12px 12px 4px 12px;
+    padding: 12px 16px;
+    margin: 8px 0 8px 60px;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+.chat-bubble-ai {
+    background: linear-gradient(135deg, #0f1520 0%, #131b28 100%);
+    border: 1px solid #1e3a5f;
+    border-radius: 12px 12px 12px 4px;
+    padding: 14px 18px;
+    margin: 8px 60px 8px 0;
+    color: #cbd5e1;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+.chat-bubble-ai strong { color: #FF1801; }
+.chat-avatar { font-size: 1.4rem; margin-bottom: 4px; }
+.chat-container { max-height: 480px; overflow-y: auto; padding: 4px 0; }
+
+/* Sliders and selects */
+div[data-baseweb="slider"] > div { background-color: #FF1801 !important; }
+.stSelectbox > div > div { background-color: #0d1017 !important; border-color: #1a1f2e !important; }
+
+/* Expander */
+details { background: #0d1017 !important; border: 1px solid #1a1f2e !important; border-radius: 8px !important; }
+summary { color: #94a3b8 !important; font-size: 0.85rem !important; font-weight: 600 !important; }
+
+/* Team color dot */
+.team-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
+/* Data frames */
+[data-testid="stDataFrame"] { border: 1px solid #1a1f2e !important; border-radius: 8px; overflow: hidden; }
+
+/* Metric */
+[data-testid="stMetric"] { background: #0d1017; border: 1px solid #1a1f2e; border-radius: 8px; padding: 14px; }
+[data-testid="stMetricLabel"] { color: #64748b !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 0.08em; }
+[data-testid="stMetricValue"] { color: #f1f5f9 !important; font-weight: 800 !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ──────────────────────────────────────────────
+# CONSTANTS
+# ──────────────────────────────────────────────
+TEAM_META = {
+    "Mercedes":        {"color": "#00D2BE", "base_pace_rank": 1.1},
+    "Ferrari":         {"color": "#E8002D", "base_pace_rank": 1.4},
+    "McLaren":         {"color": "#FF8000", "base_pace_rank": 1.5},
+    "Red Bull Racing": {"color": "#3671C6", "base_pace_rank": 2.2},
+    "Alpine":          {"color": "#0093CC", "base_pace_rank": 3.4},
+    "Racing Bulls":    {"color": "#6692FF", "base_pace_rank": 3.8},
+    "Haas F1 Team":    {"color": "#B6BABD", "base_pace_rank": 4.1},
+    "Haas":            {"color": "#B6BABD", "base_pace_rank": 4.1},
+    "Williams":        {"color": "#37BEDD", "base_pace_rank": 4.5},
+    "Audi":            {"color": "#F50A23", "base_pace_rank": 5.2},
+    "Aston Martin":    {"color": "#229971", "base_pace_rank": 5.5},
+    "Cadillac":        {"color": "#C8A45A", "base_pace_rank": 5.8},
+}
+
+# Fallback standings (updated to latest known 2026 data)
+FALLBACK_DRIVERS = [
+    {"Pos": 1,  "Driver": "K. ANTONELLI",  "Team": "Mercedes",        "Points": 156},
+    {"Pos": 2,  "Driver": "L. HAMILTON",   "Team": "Ferrari",         "Points": 90},
+    {"Pos": 3,  "Driver": "G. RUSSELL",    "Team": "Mercedes",        "Points": 88},
+    {"Pos": 4,  "Driver": "C. LECLERC",    "Team": "Ferrari",         "Points": 75},
+    {"Pos": 5,  "Driver": "O. PIASTRI",    "Team": "McLaren",         "Points": 58},
+    {"Pos": 6,  "Driver": "L. NORRIS",     "Team": "McLaren",         "Points": 58},
+    {"Pos": 7,  "Driver": "M. VERSTAPPEN", "Team": "Red Bull Racing", "Points": 43},
+    {"Pos": 8,  "Driver": "P. GASLY",      "Team": "Alpine",          "Points": 35},
+    {"Pos": 9,  "Driver": "I. HADJAR",     "Team": "Red Bull Racing", "Points": 26},
+    {"Pos": 10, "Driver": "L. LAWSON",     "Team": "Racing Bulls",    "Points": 24},
+    {"Pos": 11, "Driver": "O. BEARMAN",    "Team": "Haas F1 Team",    "Points": 18},
+    {"Pos": 12, "Driver": "F. COLAPINTO",  "Team": "Alpine",          "Points": 15},
+    {"Pos": 13, "Driver": "A. LINDBLAD",   "Team": "Racing Bulls",    "Points": 11},
+    {"Pos": 14, "Driver": "C. SAINZ",      "Team": "Williams",        "Points": 6},
+    {"Pos": 15, "Driver": "A. ALBON",      "Team": "Williams",        "Points": 5},
+    {"Pos": 16, "Driver": "E. OCON",       "Team": "Haas F1 Team",    "Points": 3},
+    {"Pos": 17, "Driver": "G. BORTOLETO",  "Team": "Audi",            "Points": 2},
+    {"Pos": 18, "Driver": "F. ALONSO",     "Team": "Aston Martin",    "Points": 1},
+    {"Pos": 19, "Driver": "S. PEREZ",      "Team": "Cadillac",        "Points": 0},
+    {"Pos": 20, "Driver": "N. HULKENBERG", "Team": "Audi",            "Points": 0},
+    {"Pos": 21, "Driver": "V. BOTTAS",     "Team": "Cadillac",        "Points": 0},
+    {"Pos": 22, "Driver": "L. STROLL",     "Team": "Aston Martin",    "Points": 0},
 ]
 
-CONSTRUCTORS_STANDINGS_2026 = [
-    {"Pos": 1, "Team": "Mercedes", "Points": 244},
-    {"Pos": 2, "Team": "Ferrari", "Points": 165},
-    {"Pos": 3, "Team": "McLaren", "Points": 116},
-    {"Pos": 4, "Team": "Red Bull Racing", "Points": 69},
-    {"Pos": 5, "Team": "Alpine", "Points": 50},
-    {"Pos": 6, "Team": "Racing Bulls", "Points": 35},
-    {"Pos": 7, "Team": "Haas F1 Team", "Points": 21},
-    {"Pos": 8, "Team": "Williams", "Points": 11},
-    {"Pos": 9, "Team": "Audi", "Points": 2},
-    {"Pos": 10, "Team": "Aston Martin", "Points": 1},
-    {"Pos": 11, "Team": "Cadillac", "Points": 0}
+FALLBACK_CONSTRUCTORS = [
+    {"Pos": 1,  "Team": "Mercedes",        "Points": 244},
+    {"Pos": 2,  "Team": "Ferrari",         "Points": 165},
+    {"Pos": 3,  "Team": "McLaren",         "Points": 116},
+    {"Pos": 4,  "Team": "Red Bull Racing", "Points": 69},
+    {"Pos": 5,  "Team": "Alpine",          "Points": 50},
+    {"Pos": 6,  "Team": "Racing Bulls",    "Points": 35},
+    {"Pos": 7,  "Team": "Haas F1 Team",    "Points": 21},
+    {"Pos": 8,  "Team": "Williams",        "Points": 11},
+    {"Pos": 9,  "Team": "Audi",            "Points": 2},
+    {"Pos": 10, "Team": "Aston Martin",    "Points": 1},
+    {"Pos": 11, "Team": "Cadillac",        "Points": 0},
 ]
 
-# --- SERVERLESS DATA ORCHESTRATION ENGINE (OPENF1 DIRECT CAPTURE) ---
-@st.cache_data(ttl=1800)
-def pull_authentic_field_payload():
-    base_url = "https://api.openf1.org/v1"
+# ──────────────────────────────────────────────
+# DATA FETCHERS — all free, no API keys needed
+# ──────────────────────────────────────────────
+
+@st.cache_data(ttl=300)  # refresh every 5 min — picks up new race results quickly
+def fetch_live_standings():
+    """Fetch live 2026 standings from Ergast/Jolpi (free, no key)."""
+    year = datetime.utcnow().year
+    base = "https://api.jolpi.ca/ergast/f1"
+    drivers, constructors = [], []
+    source = "live"
     try:
-        meeting_req = requests.get(f"{base_url}/meetings?meeting_key=latest", timeout=5).json()
-        if not meeting_req:
-            raise ValueError("Telemetry feed offline.")
-        meeting = meeting_req[0]
-        m_key = meeting['meeting_key']
-        
-        payload = {
-            "race_name": meeting.get("meeting_official_name") or meeting.get("meeting_name", "Grand Prix World Championship"),
-            "location": f"{meeting.get('location', 'Unknown Track')}, {meeting.get('country_name', 'Global Cycle')}",
-            "circuit_short": meeting.get("circuit_short_name", "GP Layout"),
-            "drivers": []
-        }
-        
-        sessions_req = requests.get(f"{base_url}/sessions?meeting_key={m_key}", timeout=5).json()
-        q_key = None
-        for s in sessions_req:
-            if "Qualifying" in s.get("session_name", ""):
-                q_key = s['session_key']
-                break
-        
-        if not q_key:
-            raise ValueError("Qualifying data frame unassigned.")
-            
-        results_req = requests.get(f"{base_url}/session_result?session_key={q_key}", timeout=5).json()
-        drivers_req = requests.get(f"{base_url}/drivers?session_key={q_key}", timeout=5).json()
-        
-        driver_directory = {
-            str(d['driver_number']): {
-                "name": d.get('broadcast_name', 'Unknown Lineup'),
-                "team": d.get('team_name', 'Independent')
-            } for d in drivers_req
-        }
-        
-        for res in results_req:
-            pos = res.get('position')
-            d_num = str(res.get('driver_number'))
-            if pos and d_num in driver_directory:
-                meta = driver_directory[d_num]
-                payload["drivers"].append({
-                    "driver_num": d_num,
-                    "driver": meta["name"],
-                    "team": meta["team"],
-                    "grid_start": int(pos)
-                })
-        return payload
-
+        dr = requests.get(f"{base}/{year}/driverStandings.json?limit=30", timeout=6)
+        cr = requests.get(f"{base}/{year}/constructorStandings.json?limit=15", timeout=6)
+        if dr.status_code == 200 and cr.status_code == 200:
+            d_list = dr.json()["MRData"]["StandingsTable"]["StandingsLists"]
+            c_list = cr.json()["MRData"]["StandingsTable"]["StandingsLists"]
+            if d_list and c_list:
+                for s in d_list[0]["DriverStandings"]:
+                    name = f"{s['Driver']['givenName'][0]}. {s['Driver']['familyName']}".upper()
+                    team = s["Constructors"][0]["name"] if s["Constructors"] else "—"
+                    drivers.append({"Pos": int(s["position"]), "Driver": name, "Team": team, "Points": int(float(s["points"]))})
+                for s in c_list[0]["ConstructorStandings"]:
+                    constructors.append({"Pos": int(s["position"]), "Team": s["Constructor"]["name"], "Points": int(float(s["points"]))})
+                return drivers, constructors, "live"
     except Exception:
-        return {
-            "race_name": "Circuit de Barcelona-Catalunya Grand Prix",
-            "location": "Montmeló, Spain",
-            "circuit_short": "Catalunya Layout",
-            "drivers": [
-                {"driver_num": "12", "driver": "K. ANTONELLI", "team": "Mercedes", "grid_start": 1},
-                {"driver_num": "44", "driver": "L. HAMILTON", "team": "Ferrari", "grid_start": 2},
-                {"driver_num": "63", "driver": "G. RUSSELL", "team": "Mercedes", "grid_start": 3},
-                {"driver_num": "16", "driver": "C. LECLERC", "team": "Ferrari", "grid_start": 4},
-                {"driver_num": "1", "driver": "L. NORRIS", "team": "McLaren", "grid_start": 5},
-                {"driver_num": "81", "driver": "O. PIASTRI", "team": "McLaren", "grid_start": 6},
-                {"driver_num": "3", "driver": "M. VERSTAPPEN", "team": "Red Bull Racing", "grid_start": 7},
-                {"driver_num": "14", "driver": "F. ALONSO", "team": "Aston Martin", "grid_start": 18}
-            ]
-        }
+        pass
+    return FALLBACK_DRIVERS, FALLBACK_CONSTRUCTORS, "cached"
 
-api_payload = pull_authentic_field_payload()
-df_field = pd.DataFrame(api_payload["drivers"])
 
-# --- GLOBAL HUB HEADER BANNER ---
-st.markdown(
-    f"""
-    <div class="race-context-banner">
-        <span style="color: #FF1801; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.15em; text-transform: uppercase;">📡 PIT-WALL INTEGRATED COMMAND SYSTEM</span>
-        <h1 style="margin: 4px 0 2px 0; font-weight: 900; letter-spacing: -0.02em; font-size: 2.2rem; color: #ffffff;">{api_payload['race_name'].upper()}</h1>
-        <p style="margin: 0; color: #94a3b8; font-size: 1.05rem; font-weight: 500;">📍 Location Context: <b style="color: #38bdf8;">{api_payload['location']}</b> &nbsp;|&nbsp; Global Telemetry Active</p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+@st.cache_data(ttl=1800)
+def fetch_race_weekend():
+    """Fetch current race weekend info from OpenF1."""
+    try:
+        r = requests.get("https://api.openf1.org/v1/meetings?meeting_key=latest", timeout=5)
+        if r.status_code == 200 and r.json():
+            m = r.json()[0]
+            name = m.get("meeting_official_name") or m.get("meeting_name", "F1 Grand Prix")
+            location = f"{m.get('location', '')}, {m.get('country_name', '')}"
+            circuit = m.get("circuit_short_name", "Circuit")
+            m_key = m["meeting_key"]
 
-# --- APPLICATION NAVIGATIONAL ROUTER ---
-tab_home, tab_predictor, tab_chatbot = st.tabs(["🏠 COMMAND HOME", "📊 STRATEGY PREDICTOR ENGINE", "🎙️ AI RACE ENGINEER FEED"])
+            sessions = requests.get(f"https://api.openf1.org/v1/sessions?meeting_key={m_key}", timeout=5).json()
+            q_key = next((s["session_key"] for s in sessions if "Qualifying" in s.get("session_name", "")), None)
 
-# ==========================================
-# 🏠 TAB 1: THE HOME CENTER / WELCOME INTERFACE
-# ==========================================
-with tab_home:
-    st.markdown(
-        """
-        <div class="welcome-box">
-            <h2 style='margin: 0 0 10px 0; font-weight: 800; color: #ffffff;'>Welcome to the Pit Wall, Strategist.</h2>
-            <p style='margin: 0; color: #cbd5e1; font-size: 1.05rem; line-height: 1.6;'>
-                This command deck breaks down high-level Formula 1 telemetry metrics into human-readable tactical elements. 
-                Whether you're looking to run complex race simulations or just trying to understand track variables without 
-                drowning in physics data, navigate using the tabs above to control the team's assets.
-            </p>
+            drivers = []
+            if q_key:
+                results = requests.get(f"https://api.openf1.org/v1/session_result?session_key={q_key}", timeout=5).json()
+                driver_map = {
+                    str(d["driver_number"]): {"name": d.get("broadcast_name", ""), "team": d.get("team_name", "")}
+                    for d in requests.get(f"https://api.openf1.org/v1/drivers?session_key={q_key}", timeout=5).json()
+                }
+                for res in results:
+                    pos = res.get("position")
+                    dnum = str(res.get("driver_number"))
+                    if pos and dnum in driver_map:
+                        meta = driver_map[dnum]
+                        drivers.append({"driver_num": dnum, "driver": meta["name"], "team": meta["team"], "grid_start": int(pos)})
+            return {"race_name": name, "location": location, "circuit_short": circuit, "drivers": drivers}
+    except Exception:
+        pass
+    return {
+        "race_name": "Circuit de Barcelona-Catalunya Grand Prix",
+        "location": "Montmeló, Spain",
+        "circuit_short": "Catalunya",
+        "drivers": [
+            {"driver_num": "12", "driver": "K. ANTONELLI",  "team": "Mercedes",        "grid_start": 1},
+            {"driver_num": "44", "driver": "L. HAMILTON",   "team": "Ferrari",         "grid_start": 2},
+            {"driver_num": "63", "driver": "G. RUSSELL",    "team": "Mercedes",        "grid_start": 3},
+            {"driver_num": "16", "driver": "C. LECLERC",    "team": "Ferrari",         "grid_start": 4},
+            {"driver_num": "1",  "driver": "L. NORRIS",     "team": "McLaren",         "grid_start": 5},
+            {"driver_num": "81", "driver": "O. PIASTRI",    "team": "McLaren",         "grid_start": 6},
+            {"driver_num": "3",  "driver": "M. VERSTAPPEN", "team": "Red Bull Racing", "grid_start": 7},
+            {"driver_num": "10", "driver": "P. GASLY",      "team": "Alpine",          "grid_start": 8},
+        ]
+    }
+
+
+# ──────────────────────────────────────────────
+# LOAD DATA
+# ──────────────────────────────────────────────
+drivers_standings, constructors_standings, standings_source = fetch_live_standings()
+weekend = fetch_race_weekend()
+df_field = pd.DataFrame(weekend["drivers"])
+
+# ──────────────────────────────────────────────
+# HERO BANNER
+# ──────────────────────────────────────────────
+live_badge = "🟢 LIVE DATA" if standings_source == "live" else "🟡 CACHED DATA"
+st.markdown(f"""
+<div class="hero-banner">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+        <div>
+            <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.12em; color:#FF1801; text-transform:uppercase; margin-bottom:6px;">
+                🏎️ F1 PIT-WALL HUB &nbsp;·&nbsp; 2026 SEASON
+            </div>
+            <div style="font-size:1.9rem; font-weight:900; color:#f1f5f9; letter-spacing:-0.02em; line-height:1.1;">
+                {weekend['race_name'].upper()}
+            </div>
+            <div style="font-size:0.88rem; color:#64748b; margin-top:6px;">
+                📍 {weekend['location']} &nbsp;·&nbsp; {weekend['circuit_short']}
+            </div>
         </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>📋 WEEKEND STATUS BRIEFING</h3>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            f"""
-            <div class="pitwall-card" style="border-left: 4px solid #38bdf8;">
-                <div class="card-title">🗺️ Track Venue Profile</div>
-                <div class="card-value">{api_payload['circuit_short']}</div>
-                <div class="card-subtext">Dynamic Live Transponder Feed</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-    with col2:
-        st.markdown(
-            f"""
-            <div class="pitwall-card" style="border-left: 4px solid #a855f7;">
-                <div class="card-title">🏎️ Registered Competitors</div>
-                <div class="card-value">{len(df_field)} Cars Processed</div>
-                <div class="card-subtext">Active 11-Team Grid Layout</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
-    with col3:
-        st.markdown(
-            """
-            <div class="pitwall-card" style="border-left: 4px solid #22c55e;">
-                <div class="card-title">🚦 Session Control</div>
-                <div class="card-value">Quali Complete</div>
-                <div class="card-subtext">Grid Order Ingestion: Successful</div>
-            </div>
-            """, unsafe_allow_html=True
-        )
+        <div style="text-align:right;">
+            <div style="font-size:0.7rem; color:#64748b; font-weight:600; letter-spacing:0.08em; margin-bottom:4px;">STANDINGS</div>
+            <div style="font-size:0.85rem; font-weight:700; color:#94a3b8;">{live_badge}</div>
+            <div style="font-size:0.7rem; color:#334155; margin-top:4px;">Auto-refreshes every 5 min</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-    # --- SIDE BY SIDE CHAMPIONSHIP STANDINGS METRICS ---
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🏆 OFFICIAL CHAMPIONSHIP STANDINGS</h3>", unsafe_allow_html=True)
-    
-    standings_col1, standings_col2 = st.columns(2)
-    
-    with standings_col1:
-        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🏁 Driver Standings Leaderboard</h4>", unsafe_allow_html=True)
-        df_drivers = pd.DataFrame(DRIVERS_STANDINGS_2026)
-        
-        def color_driver_rows(row):
-            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-            
-        styled_drivers = df_drivers.style.apply(color_driver_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
-        st.dataframe(
-            styled_drivers, 
-            hide_index=True, 
-            use_container_width=True, 
-            height=450,
-            column_config={
-                "Pos": st.column_config.Column(alignment="center"),
-                "Driver": st.column_config.Column(alignment="center"),
-                "Team": st.column_config.Column(alignment="center"),
-                "Points": st.column_config.Column(alignment="center"),
-            }
-        )
-        
-    with standings_col2:
-        st.markdown("<h4 style='color:#ffffff; margin-bottom:10px;'>🛠️ Constructors Championship</h4>", unsafe_allow_html=True)
-        df_constructors = pd.DataFrame(CONSTRUCTORS_STANDINGS_2026)
-        
-        def color_team_rows(row):
-            color = TEAM_META.get(row['Team'], {"color": "#282e3d"})["color"]
-            return [f'border-left: 4px solid {color}; background-color: #12151e; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-            
-        styled_constructors = df_constructors.style.apply(color_team_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
-        st.dataframe(
-            styled_constructors, 
-            hide_index=True, 
-            use_container_width=True, 
-            height=450,
-            column_config={
-                "Pos": st.column_config.Column(alignment="center"),
-                "Team": st.column_config.Column(alignment="center"),
-                "Points": st.column_config.Column(alignment="center"),
-            }
-        )
+# ──────────────────────────────────────────────
+# TABS
+# ──────────────────────────────────────────────
+tab_home, tab_predictor, tab_chatbot = st.tabs(["🏠  HOME", "📊  STRATEGY ENGINE", "🎙️  AI RACE ENGINEER"])
 
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>💡 BEGINNER RACE BRIEFING: WHAT MATTERS THIS WEEKEND?</h3>", unsafe_allow_html=True)
-    st.markdown(
-        """
-        * **The Starting Position Rule:** The driver starting P1 (Pole Position) has the clean air advantage. The further back you go, the more cars a driver has to overtake, which burns down their tyres much faster.
-        * **What is ERS?** Energy Recovery Systems act like a video-game speed boost button. Drivers harvest energy when braking and dump it back onto the straights to attack.
-        * **The Heat Threat:** High track temperatures heat up the rubber. If the asphalt gets too hot, the tyres lose atomic cohesion and turn into mush (called *falling off the cliff*).
-        """
-    )
+# ══════════════════════════════════════════════
+# TAB 1 — HOME
+# ══════════════════════════════════════════════
+with tab_home:
+    # Summary metrics
+    leader = drivers_standings[0]
+    constructor_leader = constructors_standings[0]
+    gap = drivers_standings[0]["Points"] - drivers_standings[1]["Points"]
 
-
-# ==========================================
-# 📊 TAB 2: THE CURRENT STRATEGY PREDICTOR
-# ==========================================
-with tab_predictor:
-    st.markdown("<h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>🕹️ TRACK STRATEGY PARAMETERS</h3>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    with c1: weather_state = st.selectbox("Track Surface State", ["Dry Baseline Asphalt", "Damp Track / Greasy", "Heavy Rain Conditions"])
+    with c1:
+        lc = TEAM_META.get(leader["Team"], {"color": "#FF1801"})["color"]
+        st.markdown(f"""
+        <div class="card" style="border-left:3px solid {lc};">
+            <div class="card-label">🏆 Championship Leader</div>
+            <div class="card-headline">{leader['Driver']}</div>
+            <div class="card-sub">{leader['Team']} · {leader['Points']} pts</div>
+        </div>""", unsafe_allow_html=True)
+    with c2:
+        cc = TEAM_META.get(constructor_leader["Team"], {"color": "#FF1801"})["color"]
+        st.markdown(f"""
+        <div class="card" style="border-left:3px solid {cc};">
+            <div class="card-label">🛠️ Constructors Leader</div>
+            <div class="card-headline">{constructor_leader['Team']}</div>
+            <div class="card-sub">{constructor_leader['Points']} pts · {len(constructors_standings)} teams</div>
+        </div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class="card" style="border-left:3px solid #a855f7;">
+            <div class="card-label">📍 Current Venue</div>
+            <div class="card-headline" style="font-size:1.2rem;">{weekend['circuit_short']}</div>
+            <div class="card-sub">{weekend['location']}</div>
+        </div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="card" style="border-left:3px solid #22c55e;">
+            <div class="card-label">🔺 Points Gap (P1→P2)</div>
+            <div class="card-headline">+{gap} pts</div>
+            <div class="card-sub">{drivers_standings[0]['Driver']} leads {drivers_standings[1]['Driver']}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # Standings tables
+    st.markdown('<div class="section-header">🏆 CHAMPIONSHIP STANDINGS</div>', unsafe_allow_html=True)
+    col_d, col_c = st.columns(2)
+
+    def render_standings_df(data, team_col):
+        df = pd.DataFrame(data)
+        def style_rows(row):
+            color = TEAM_META.get(row[team_col], {"color": "#1e293b"})["color"]
+            return [f"border-left:4px solid {color}; background:#0d1017; font-family:'JetBrains Mono',monospace;"] * len(row)
+        return df.style.apply(style_rows, axis=1).set_properties(**{"text-align": "center"})
+
+    with col_d:
+        st.markdown("**🏁 Driver Standings**")
+        st.dataframe(
+            render_standings_df(drivers_standings, "Team"),
+            hide_index=True, use_container_width=True, height=520,
+        )
+    with col_c:
+        st.markdown("**🛠️ Constructor Standings**")
+        st.dataframe(
+            render_standings_df(constructors_standings, "Team"),
+            hide_index=True, use_container_width=True, height=400,
+        )
+
+    # Beginner guide
+    st.markdown('<div class="section-header">💡 F1 BASICS — WHAT TO KNOW THIS WEEKEND</div>', unsafe_allow_html=True)
+    g1, g2, g3 = st.columns(3)
+    guides = [
+        ("🏎️ Track Position", "Starting at the front is gold. Clean air = less drag = faster lap times. Every car behind battles dirty turbulent air, wearing tyres faster."),
+        ("⚡ ERS — The Boost Button", "Energy Recovery Systems harvest kinetic energy under braking and release it as electric power on straights — think of it as a 160hp speed boost the driver can deploy tactically."),
+        ("🌡️ Tyre Degradation", "High track temps soften rubber compounds. Push too hard and you hit the 'cliff' — a sudden, dramatic loss of grip. Tyre management is often the difference between winning and finishing fifth."),
+    ]
+    for col, (title, text) in zip([g1, g2, g3], guides):
+        with col:
+            st.markdown(f"""
+            <div class="card">
+                <div class="card-label">{title}</div>
+                <div style="color:#94a3b8; font-size:0.88rem; line-height:1.6; margin-top:6px;">{text}</div>
+            </div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════
+# TAB 2 — STRATEGY PREDICTOR
+# ══════════════════════════════════════════════
+with tab_predictor:
+    if df_field.empty:
+        st.warning("No qualifying data loaded. Check the API feed or use the fallback grid.")
+        st.stop()
+
+    st.markdown('<div class="section-header">🕹️ RACE CONDITION PARAMETERS</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: weather_state = st.selectbox("Track Conditions", ["Dry", "Damp / Greasy", "Heavy Rain"])
     with c2: track_temp = st.slider("Track Temp (°C)", 15, 65, 35)
-    with c3: fuel_load = st.slider("Starting Fuel Load (kg)", 95, 110, 100)
-    with c4: ERS_mode = st.selectbox("ERS Deployment Curve", ["Balanced Energy Harvest", "Overtake Attack Curve", "Battery Preservation"])
+    with c3: fuel_load = st.slider("Starting Fuel (kg)", 95, 110, 100)
+    with c4: ers_mode = st.selectbox("ERS Mode", ["Balanced", "Attack (Overtake)", "Conservation"])
 
     team_modifiers = {}
-    with st.expander("🛠️ CONSTRUCTOR GARAGE: PERFORMANCE CONFIGURATOR"):
-        team_cols = st.columns(2)
-        for idx, team in enumerate(sorted(df_field['team'].unique())):
-            with team_cols[idx % 2]:
-                team_modifiers[team] = st.slider(f"⚙️ {team} Delta Offset (s)", -0.8, 0.8, 0.0, step=0.05)
+    with st.expander("⚙️ Advanced: Team Performance Offsets"):
+        tc = st.columns(3)
+        for idx, team in enumerate(sorted(df_field["team"].unique())):
+            with tc[idx % 3]:
+                team_modifiers[team] = st.slider(f"{team}", -0.8, 0.8, 0.0, step=0.05, key=f"tm_{team}")
 
-    # --- MODEL PACE COMPUTATIONS ---
-    def compute_high_accuracy_race_pace(row):
-        team = row['team']
-        grid = int(row['grid_start'])
-        meta = TEAM_META.get(team, {"base_pace_rank": 4.0, "color": "#ffffff"})
-        pace_score = np.log1p(meta["base_pace_rank"]) * 0.65 + team_modifiers.get(team, 0.0)
-        pace_score += (track_temp - 35) * 0.012 + (fuel_load - 100) * 0.025
-        if grid > 1: pace_score += (np.power(grid - 1, 1.15) * 0.045)
-        if ERS_mode == "Overtake Attack Curve": pace_score -= 0.08
-        if "Rain" in weather_state: pace_score += (grid * 0.12)
-        return pace_score
+    # Pace model
+    def compute_pace(row):
+        team = row["team"]
+        grid = int(row["grid_start"])
+        meta = TEAM_META.get(team, {"base_pace_rank": 4.0})
+        score = np.log1p(meta["base_pace_rank"]) * 0.65 + team_modifiers.get(team, 0.0)
+        score += (track_temp - 35) * 0.012 + (fuel_load - 100) * 0.025
+        if grid > 1: score += np.power(grid - 1, 1.15) * 0.045
+        if ers_mode == "Attack (Overtake)": score -= 0.08
+        if "Rain" in weather_state: score += grid * 0.12
+        return score
 
-    def assign_race_strategy(grid_pos):
-        if grid_pos <= 4: return "Medium ➔ Hard (1-Stop)", "Laps 19 - 25", "Track Position Lock"
-        elif 5 <= grid_pos <= 10: return "Soft ➔ Medium ➔ Hard (2-Stop)", "Laps 12 & 38", "Aggressive Undercut Plan"
-        else: return "Hard ➔ Medium (1-Stop Alt)", "Laps 36 - 44", "Long Stint Safety Car Gamble"
-
-    df_field['Pace_Delta_Seconds'] = df_field.apply(compute_high_accuracy_race_pace, axis=1)
-    df_field = df_field.sort_values(by='Pace_Delta_Seconds').reset_index(drop=True)
-    df_field['Projected_Finish'] = df_field.index + 1
-    df_field['Net_Positions_Gained'] = df_field['grid_start'] - df_field['Projected_Finish']
-
-    strat_data = [assign_race_strategy(pos) for pos in df_field['grid_start']]
-    df_field['Recommended_Strategy'] = [s[0] for s in strat_data]
-    df_field['Target_Pit_Window'] = [s[1] for s in strat_data]
-    df_field['Strategic_Intent'] = [s[2] for s in strat_data]
-
-    winner = df_field.iloc[0]
-    podium = df_field.iloc[1:3]
-    charger = df_field.sort_values(by="Net_Positions_Gained", ascending=False).iloc[0]
-
-    # --- LIVE BROADCAST MATRIX PRESENTATION ---
-    st.markdown("<br><h3 style='font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;'>📊 HIGH-ACCURACY AI RUN PREDICTIONS</h3>", unsafe_allow_html=True)
-    h1, h2, h3 = st.columns(3)
-    with h1:
-        team_color = TEAM_META.get(winner['team'], {"color": "#FF1801"})["color"]
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid {team_color};"><div class="card-title">🏆 AI Predicted Winner</div><div class="card-value">{winner["driver"]}</div><div class="card-subtext">{winner["team"]} • {winner["Recommended_Strategy"]}</div></div>', unsafe_allow_html=True)
-    with h2:
-        p_text = ", ".join([f"P{int(r['Projected_Finish'])}: {r['driver']}" for _, r in podium.iterrows()])
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid #FF8000;"><div class="card-title">🥈 🥉 Podium Contenders</div><div class="card-value" style="font-size: 1.15rem; padding-top:4px;">{p_text}</div><div class="card-subtext">Optimal Strategy Finish Group</div></div>', unsafe_allow_html=True)
-    with h3:
-        c_text = f"{charger['driver']} (+{int(charger['Net_Positions_Gained'])})" if charger['Net_Positions_Gained'] > 0 else "Grid Order Locked"
-        st.markdown(f'<div class="pitwall-card" style="border-left: 4px solid #37BEDD;"><div class="card-title">🚀 Strategic Field Overtaker</div><div class="card-value">{c_text}</div><div class="card-subtext">Starting P{int(charger["grid_start"])} → Target P{int(charger["Projected_Finish"])}</div></div>', unsafe_allow_html=True)
-
-    # --- MAIN PERFORMANCE TABLES ---
-    sub_tab1, sub_tab2 = st.tabs(["🏁 LIVE MODEL STANDINGS & STRATEGIES", "⏱️ TOTAL RACE DISTANCE DIFFERENTIAL"])
-    with sub_tab1:
-        def style_authentic_rows(row):
-            color = TEAM_META.get(row['CONSTRUCTOR'], {"color": "#ffffff"})["color"]
-            return [f'border-left: 5px solid {color}; background-color: #11141c; font-weight: 600; font-family: monospace; text-align: center; justify-content: center;'] * len(row)
-        
-        render_df = df_field[['Projected_Finish', 'grid_start', 'driver', 'team', 'Recommended_Strategy', 'Target_Pit_Window', 'Strategic_Intent']].copy()
-        render_df.columns = ['AI_FINISH', 'GRID_START', 'DRIVER_LINEUP', 'CONSTRUCTOR', 'OPTIMAL_STRATEGY', 'PIT_WINDOW', 'STRATEGIC_INTENT']
-        
-        styled_render = render_df.style.apply(style_authentic_rows, axis=1).set_properties(**{'text-align': 'center'})
-        
-        st.dataframe(
-            styled_render, 
-            hide_index=True, 
-            use_container_width=True,
-            column_config={
-                "AI_FINISH": st.column_config.Column(alignment="center"),
-                "GRID_START": st.column_config.Column(alignment="center"),
-                "DRIVER_LINEUP": st.column_config.Column(alignment="center"),
-                "CONSTRUCTOR": st.column_config.Column(alignment="center"),
-                "OPTIMAL_STRATEGY": st.column_config.Column(alignment="center"),
-                "PIT_WINDOW": st.column_config.Column(alignment="center"),
-                "STRATEGIC_INTENT": st.column_config.Column(alignment="center"),
-            }
-        )
-
-    with sub_tab2:
-        leader_time = (80.0 + df_field.iloc[0]['Pace_Delta_Seconds']) * 55
-        chart_payload = [{"Driver": r['driver'], "Gap to Leader (s)": round(((80.0 + r['Pace_Delta_Seconds']) * 55) - leader_time, 2), "Team": r['team']} for _, r in df_field.iterrows()]
-        st.bar_chart(pd.DataFrame(chart_payload), x="Driver", y="Gap to Leader (s)", color="Team", use_container_width=True)
-
-
-# ==========================================
-# 🎙️ TAB 3: AI RACE ENGINEER CHATBOT
-# ==========================================
-# Locate your chatbot tab block in app.py
-with tab_chatbot:
-    st.subheader("📻 Pit-Wall Comms Link")
-    
-    user_msg = st.text_input("Message AI Race Engineer:", key="engineer_input")
-    
-    if user_msg:
-        msg_clean = user_msg.lower().strip()
-        
-        # 1. Handle Standings/Championship Queries dynamically
-        if "championship" in msg_clean or "leading" in msg_clean or "standings" in msg_clean:
-            # Check if your standings dataframe exists
-            if 'df_standings' in locals() or 'df_standings' in globals():
-                # Assuming your dataframe columns are 'Driver' and 'Points'
-                leader = df_standings.iloc[0]['Driver']
-                points = df_standings.iloc[0]['Points']
-                st.info(f"📻 **Race Engineer:** According to current telemetry sync, {leader} is currently leading the World Drivers' Championship with {points} points.")
-            else:
-                st.warning("📻 **Race Engineer:** Data pipeline telemetry offline. Unable to parse current standings array right now.")
-                
-        # 2. Handle specific queries for Max Verstappen
-        elif "verstappen" in msg_clean or "max" in msg_clean:
-            if 'df_standings' in locals() or 'df_standings' in globals():
-                # Locate Max in your tracked dataframe
-                max_data = df_standings[df_standings['Driver'].str.contains("Verstappen", case=False, na=False)]
-                if not max_data.empty:
-                    pos = max_data.index[0] + 1
-                    pts = max_data.iloc[0]['Points']
-                    st.info(f"📻 **Race Engineer:** Max Verstappen is currently P{pos} in the standings with {pts} points.")
-                else:
-                    st.info("📻 **Race Engineer:** Max Verstappen is indexed in our telemetry matrix, but no active points have been parsed for this session slice yet.")
-            else:
-                st.info("📻 **Race Engineer:** Max Verstappen is currently tracking in the primary driver database, but your local standings cache is uninitialized.")
-
-        # 3. Handle F1 figures / general knowledge queries without breaking
-        elif "toto" in msg_clean or "wolff" in msg_clean:
-            st.info("📻 **Race Engineer:** Toto Wolff is the Team Principal and CEO of the Mercedes-AMG Petronas F1 Team. (Note: General knowledge queries use edge-cached dictionary definitions).")
-
-        # 4. Clean up generic responses so it doesn't spit out the hardcoded Catalunya loop
+    def get_strategy(grid_pos):
+        if grid_pos <= 4:
+            return "Medium → Hard", "Laps 19–25", "Track Position Hold"
+        elif grid_pos <= 10:
+            return "Soft → Medium → Hard", "Laps 12 & 38", "Undercut Attack"
         else:
-            st.info(f"📻 **Race Engineer:** Copy that, driver. Message received: '{user_msg}'. Telemetry parser is monitoring live data feeds. Ask me about 'standings' or specific driver tracking to query live values.")
+            return "Hard → Medium", "Laps 36–44", "Safety Car Gamble"
+
+    df = df_field.copy()
+    df["pace_score"] = df.apply(compute_pace, axis=1)
+    df = df.sort_values("pace_score").reset_index(drop=True)
+    df["Pred_Pos"] = df.index + 1
+    df["Pos_Delta"] = df["grid_start"] - df["Pred_Pos"]
+    strats = [get_strategy(p) for p in df["grid_start"]]
+    df["Strategy"], df["Pit_Window"], df["Intent"] = zip(*strats)
+
+    winner = df.iloc[0]
+    podium = df.iloc[1:3]
+    charger = df.sort_values("Pos_Delta", ascending=False).iloc[0]
+
+    # Prediction headline cards
+    st.markdown('<div class="section-header">📊 AI RACE PREDICTIONS</div>', unsafe_allow_html=True)
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        wc = TEAM_META.get(winner["team"], {"color": "#FF1801"})["color"]
+        st.markdown(f"""
+        <div class="card" style="border-left:4px solid {wc}; border-top: 1px solid {wc}33;">
+            <div class="card-label">🏆 Predicted Winner</div>
+            <div class="card-headline">{winner['driver']}</div>
+            <div class="card-sub">{winner['team']} · {winner['Strategy']}</div>
+        </div>""", unsafe_allow_html=True)
+    with p2:
+        pod_text = " · ".join([f"P{int(r.Pred_Pos)}: {r.driver}" for _, r in podium.iterrows()])
+        st.markdown(f"""
+        <div class="card" style="border-left:4px solid #FF8000;">
+            <div class="card-label">🥈🥉 Podium Contenders</div>
+            <div class="card-headline" style="font-size:1.1rem;">{pod_text}</div>
+            <div class="card-sub">Optimal strategy finish group</div>
+        </div>""", unsafe_allow_html=True)
+    with p3:
+        delta = int(charger["Pos_Delta"])
+        c_text = f"{charger['driver']} +{delta} places" if delta > 0 else "Grid order holds"
+        st.markdown(f"""
+        <div class="card" style="border-left:4px solid #37BEDD;">
+            <div class="card-label">🚀 Biggest Mover</div>
+            <div class="card-headline" style="font-size:1.2rem;">{c_text}</div>
+            <div class="card-sub">P{int(charger['grid_start'])} → P{int(charger['Pred_Pos'])} projected</div>
+        </div>""", unsafe_allow_html=True)
+
+    # Results table
+    sub1, sub2 = st.tabs(["🏁 Full Grid Predictions", "⏱️ Time Gap to Leader"])
+    with sub1:
+        render_df = df[["Pred_Pos", "grid_start", "driver", "team", "Strategy", "Pit_Window", "Intent"]].copy()
+        render_df.columns = ["Pred. Finish", "Grid", "Driver", "Constructor", "Strategy", "Pit Window", "Intent"]
+
+        def style_grid(row):
+            color = TEAM_META.get(row["Constructor"], {"color": "#1e293b"})["color"]
+            return [f"border-left:4px solid {color}; background:#0d1017; font-family:'JetBrains Mono',monospace;"] * len(row)
+
+        st.dataframe(
+            render_df.style.apply(style_grid, axis=1),
+            hide_index=True, use_container_width=True,
+        )
+    with sub2:
+        base_time = (80.0 + df.iloc[0]["pace_score"]) * 55
+        chart_data = pd.DataFrame([{
+            "Driver": r["driver"],
+            "Gap to Leader (s)": round(((80.0 + r["pace_score"]) * 55) - base_time, 1),
+        } for _, r in df.iterrows()])
+        st.bar_chart(chart_data, x="Driver", y="Gap to Leader (s)", use_container_width=True)
+
+
+# ══════════════════════════════════════════════
+# TAB 3 — AI RACE ENGINEER CHATBOT
+# ══════════════════════════════════════════════
+with tab_chatbot:
+    # Build live context for the AI
+    d_summary = "\n".join([f"P{d['Pos']}. {d['Driver']} ({d['Team']}) — {d['Points']} pts" for d in drivers_standings[:10]])
+    c_summary = "\n".join([f"P{c['Pos']}. {c['Team']} — {c['Points']} pts" for c in constructors_standings[:6]])
+
+    SYSTEM_PROMPT = f"""You are an expert F1 Race Engineer and analyst working the pit wall in the 2026 Formula 1 season.
+You have deep knowledge of:
+- F1 regulations, technical rules, DRS, ERS, power units, tyres (Pirelli compounds: C1–C5, Soft/Medium/Hard/Inter/Wet)
+- Race strategy: undercuts, overcuts, pit stop windows, safety car management
+- All 22 drivers, 11 constructors and their 2026 performance
+- F1 history from 1950 to present
+- Circuit characteristics, lap records, overtaking spots
+- The 2026 technical regulation changes (new active aerodynamics, new PU formula with 50/50 ICE/ERS split)
+
+CURRENT 2026 DRIVER STANDINGS (top 10):
+{d_summary}
+
+CONSTRUCTOR STANDINGS (top 6):
+{c_summary}
+
+CURRENT RACE WEEKEND: {weekend['race_name']} at {weekend['location']}
+
+Respond in character as a knowledgeable, confident race engineer. Keep answers clear and concise — no more than 3-4 short paragraphs. Use F1 terminology naturally. If asked about real-time lap data or live timing you don't have access to, say so briefly but still give useful context. Never make up lap times or race results that aren't in the standings data above."""
+
+    # Init chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Header
+    st.markdown("""
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+        <div style="font-size:2rem;">📻</div>
+        <div>
+            <div style="font-weight:800; font-size:1.15rem; color:#f1f5f9;">AI Race Engineer</div>
+            <div style="font-size:0.8rem; color:#475569;">Powered by Claude · Ask anything about F1</div>
+        </div>
+        <div style="margin-left:auto;">
+            <span style="background:#0f2a1a; color:#22c55e; font-size:0.72rem; font-weight:700; padding:4px 10px; border-radius:20px; letter-spacing:0.06em;">● COMMS LIVE</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Suggested questions
+    if not st.session_state.chat_history:
+        st.markdown('<div style="font-size:0.75rem; color:#475569; margin-bottom:10px; font-weight:600; letter-spacing:0.08em;">SUGGESTED QUESTIONS</div>', unsafe_allow_html=True)
+        suggestions = [
+            "Who's leading the championship and why?",
+            "Explain the 2026 power unit regulation changes",
+            "What tyre strategy should the leader use?",
+            "How does DRS work and where is it enabled?",
+        ]
+        scols = st.columns(2)
+        for i, s in enumerate(suggestions):
+            with scols[i % 2]:
+                if st.button(s, key=f"sugg_{i}", use_container_width=True):
+                    st.session_state.chat_history.append({"role": "user", "content": s})
+                    st.rerun()
+
+    # Chat history display
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "user":
+                st.markdown(f'<div class="chat-bubble-user">👤 &nbsp;{msg["content"]}</div>', unsafe_allow_html=True)
+            else:
+                content = msg["content"].replace("\n", "<br>")
+                st.markdown(f'<div class="chat-bubble-ai">🎙️ &nbsp;{content}</div>', unsafe_allow_html=True)
+
+    # Process pending AI response
+    if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "user":
+        with st.spinner("Race engineer computing..."):
+            try:
+                api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+                if not api_key:
+                    raise ValueError("NO_KEY")
+                client = anthropic.Anthropic(api_key=api_key)
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",  # fast + free tier friendly
+                    max_tokens=600,
+                    system=SYSTEM_PROMPT,
+                    messages=st.session_state.chat_history,
+                )
+                reply = response.content[0].text
+            except ValueError:
+                reply = ("⚠️ **API key not configured.** Add your Anthropic API key to Streamlit secrets as `ANTHROPIC_API_KEY` to enable the AI Race Engineer. "
+                         "Get a free key at [console.anthropic.com](https://console.anthropic.com). "
+                         f"\n\nMeanwhile — the championship leader is **{drivers_standings[0]['Driver']}** "
+                         f"with **{drivers_standings[0]['Points']} points**, driving for **{drivers_standings[0]['Team']}**.")
+            except Exception as e:
+                reply = f"Comms static on the radio — {str(e)[:120]}. Try again in a moment."
+
+            st.session_state.chat_history.append({"role": "assistant", "content": reply})
+            st.rerun()
+
+    # Input
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    col_input, col_btn, col_clear = st.columns([6, 1, 1])
+    with col_input:
+        user_input = st.text_input(
+            "Message",
+            placeholder="Ask about tyres, strategy, drivers, regulations...",
+            label_visibility="collapsed",
+            key="chat_input",
+        )
+    with col_btn:
+        send = st.button("Send →", use_container_width=True, type="primary")
+    with col_clear:
+        if st.button("Clear", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    if send and user_input.strip():
+        st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
+        st.rerun()
+
+    # API key setup notice
+    if not st.secrets.get("ANTHROPIC_API_KEY"):
+        st.markdown("""
+        <div style="background:#1a1208; border:1px solid #7c4d03; border-radius:8px; padding:14px 18px; margin-top:16px;">
+            <div style="color:#f59e0b; font-weight:700; font-size:0.82rem; letter-spacing:0.06em; margin-bottom:6px;">⚙️ SETUP REQUIRED</div>
+            <div style="color:#92400e; font-size:0.83rem; line-height:1.6;">
+                To enable the AI Race Engineer, add your Anthropic API key to Streamlit Cloud secrets:<br>
+                <code style="background:#2a1a00; padding:2px 6px; border-radius:4px; font-size:0.8rem;">ANTHROPIC_API_KEY = "sk-ant-..."</code><br>
+                Free tier available at <strong>console.anthropic.com</strong>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
