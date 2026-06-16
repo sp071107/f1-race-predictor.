@@ -434,28 +434,44 @@ with tab_chatbot:
         unsafe_allow_html=True
     )
 
+    # Initialize chat state array if empty
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [{"role": "assistant", "content": "Copy that, driver. Comm channels clear. Telemetry logs compiled."}]
 
+    # Render previous historical message iterations
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]): 
             st.markdown(message["content"])
 
+    # Ingest and process user stream tokens
     if user_query := st.chat_input("Ask Pit Wall..."):
+        # Append user text immediately to display array
+        st.session_state.chat_history.append({"role": "user", "content": user_query})
         with st.chat_message("user"): 
             st.markdown(user_query)
-        st.session_state.chat_history.append({"role": "user", "content": user_query})
 
         query_clean = user_query.lower()
-        ai_response = ""
-
-        if "who is leading" in query_clean:
+        
+        # --- KNOWLEDGE ROUTING CORE ---
+        if "who is leading" in query_clean or "leader" in query_clean:
             ai_response = f"**Championship Standings Context:** Currently, **{DRIVERS_STANDINGS_2026[0]['Driver']}** dominates the driver table layout leading with **{DRIVERS_STANDINGS_2026[0]['Points']} points**."
-        elif "strategy" in query_clean:
+        
+        elif "strategy" in query_clean or "pit" in query_clean:
             ai_response = f"**Strategy Prediction Matrix:** Based on computations for **{winner['driver']}**, our simulation recommends a **{winner['Recommended_Strategy']}** scheme."
+        
+        elif "toto" in query_clean or "wolff" in query_clean:
+            ai_response = "Team Principal update: Torger Christian 'Toto' Wolff is the CEO and 33% co-owner of the Mercedes-AMG PETRONAS F1 Team. Pit wall logs indicate his driver assets are executing cleanly."
+            
+        elif "antonelli" in query_clean:
+            ai_response = f"Telemetry alert: **K. ANTONELLI** currently leads the world championship table with **{DRIVERS_STANDINGS_2026[0]['Points']} points** for Mercedes."
+            
+        elif "russell" in query_clean:
+            ai_response = f"Data processing frames confirm **G. RUSSELL** maintains optimal pace vectors here at **{api_payload['circuit_short']}**."
+            
         else:
-            ai_response = f"Copy that, driver. Data processing frames confirm **{winner['driver']}** maintains optimal pace vectors here at **{api_payload['circuit_short']}**."
+            ai_response = f"Copy that, driver. Message query logged. Telemetry frames indicate field operation variables are tracking nominal at **{api_payload['circuit_short']}**."
 
+        # Append assistant response token directly to history array state so it sticks on reload
+        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
         with st.chat_message("assistant"): 
             st.markdown(ai_response)
-        st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
