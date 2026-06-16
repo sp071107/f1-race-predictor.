@@ -107,19 +107,139 @@ with tabs[0]:
         st.metric("Races Completed", len(standings_df))
 
 # ====================== PREDICTOR ======================
+# ====================== PREDICTOR TAB ======================
 with tabs[1]:
-    st.subheader("Strategy Predictor Engine")
-    if st.button("🔄 Refresh Predictions"):
-        # You can call predictor logic here via subprocess or import
-        st.success("Predictions refreshed (see predictions.json)")
+    st.subheader("📍 Upcoming Race & Strategy Predictor")
+    
+    # Fetch next race
+    @st.cache_data(ttl=3600)
+    def get_next_race():
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{current_year}.json"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                races = resp.json()['MRData']['RaceTable']['Races']
+                today_str = datetime.utcnow().date().isoformat()
+                for race in races:
+                    if race.get('date', '') >= today_str:
+                        return {
+                            "round": race['round'],
+                            "name": race['raceName'],
+                            "circuit": race['Circuit']['circuitId'],
+                            "date": race['date'],
+                            "location": race['Circuit']['Location']['locality']
+                        }
+        except:
+            pass
+        return {"round": "N/A", "name": "Barcelona-Catalunya GP", "circuit": "catalunya", 
+                "date": "2026-06-14", "location": "Spain"}  # fallback
 
+    next_race = get_next_race()
+
+    colA, colB = st.columns([1, 2])
+    with colA:
+        st.metric("Next Race", next_race["name"])
+        st.metric("Round", next_race["round"])
+        st.caption(f"{next_race['date']} • {next_race['location']}")
+
+    with colB:
+        st.markdown("**Circuit**: " + next_race["circuit"].title())
+
+    # Full Calendar
+    st.markdown("### 📅 2026 Race Calendar")
     try:
-        with open("predictions.json") as f:
-            preds = json.load(f)
-        df_pred = pd.DataFrame(preds)
-        st.dataframe(df_pred, use_container_width=True)
+        calendar_resp = requests.get(f"https://api.jolpi.ca/ergast/f1/{current_year}.json")
+        if calendar_resp.status_code == 200:
+            cal = calendar_resp.json()['MRData']['RaceTable']['Races']
+            cal_df = pd.DataFrame([{
+                "Round": r['round'],
+                "Grand Prix": r['raceName'],
+                "Circuit": r['Circuit']['circuitId'].title(),
+                "Date": r['date']
+            } for r in cal])
+            st.dataframe(cal_df, use_container_width=True, hide_index=True)
     except:
-        st.info("Run predictor.py to generate predictions.")
+        st.info("Calendar temporarily unavailable.")
+
+    # ================== IMPROVED PREDICTIONS ==================
+    if st.button("🔮 Generate Predictions for Next Race", type="primary"):
+        with st.spinner("Running AI prediction engine..."):
+            try:
+                # Load model artifacts
+                with open("model_artifacts.json") as f:
+                    artifacts = json.load(f)
+                
+                # Simple team strength from current standings (boosts accuracy)
+                team_strength = {
+                    "Mercedes": -1.2, "Ferrari": -0.8, "McLaren": -0.6,
+                    "Red Bull Racing": 0.5, "Aston Martin": 1.1,
+                    "Alpine": 1.8, "Williams": 2.2, "Haas": 2.5,
+                    "Audi": 1.9, "Cadillac": 2.8, "Racing Bulls": 2.0
+                }
+
+                # Get current grid (fallback to standings order if no quali)
+                grid_data = []
+                try:
+                    q_url = f"https://api.jolpi.ca/ergast/f1/{current_year}/{next_race['round']}/qualifying.json"
+                    q_resp = requests.get(q_url)
+                    if q_resp.status_code == 200:
+                        results = q_resp.json()['MRData']['RaceTable']['Races'][0]['QualifyingResults']
+                        for entry in results:
+                            grid_data.append({
+                                "driver": f"{entry['Driver']['givenName']} {entry['Driver']['familyName']}",
+                                "d_id": entry['Driver']['driverId'],
+                                "team": entry['Constructor']['name'],
+                                "grid": int(entry['position'])
+                            })
+                except:
+                    # Fallback: use championship order
+                    standings = get_current_standings(current_year)
+                    for idx, row in standings.iterrows():
+                        grid_data.append({
+                            "driver": row['Driver'], "d_id": row['Driver'].lower().replace(" ", "_"),
+                            "team": row['Team'], "grid": idx + 1
+                        })
+
+                predictions = []
+                for entry in grid_data[:20]:
+                    try:
+                        d_enc = artifacts["le_driver"].index(entry["d_id"]) if entry["d_id"] in artifacts["le_driver"] else 0
+                        c_enc = 0  # fallback
+                        circ_enc = artifacts["le_circuit"].index(next_race["circuit"]) if next_race["circuit"] in artifacts["le_circuit"] else 0
+                        
+                        base_pred = model.predict([[current_year, int(next_race["round"]), circ_enc, d_enc, c_enc, entry["grid"]]])[0]
+                        
+                        # Post-processing for realism
+                        team_bias = team_strength.get(entry["team"], 1.5)
+                        adjusted = base_pred + team_bias * 0.6 + (entry["grid"] - 1) * 0.35
+                        adjusted = max(1, min(20, round(adjusted)))
+                        
+                        predictions.append({
+                            "Grid": entry["grid"],
+                            "Driver": entry["driver"],
+                            "Team": entry["team"],
+                            "Predicted Finish": int(adjusted),
+                            "Gain/Loss": entry["grid"] - int(adjusted)
+                        })
+                    except:
+                        continue
+
+                pred_df = pd.DataFrame(predictions)
+                pred_df = pred_df.sort_values("Predicted Finish")
+                
+                st.success("✅ Predictions Generated")
+                st.dataframe(pred_df, use_container_width=True, hide_index=True)
+
+                # Key Insights
+                winner = pred_df.iloc[0]
+                st.markdown(f"**🏆 AI Predicted Winner: {winner['Driver']}** ({winner['Team']})")
+                
+            except Exception as e:
+                st.error(f"Prediction error: {str(e)}")
+                st.info("Make sure predictor.py has been run recently.")
+
+    else:
+        st.info("Click the button above to generate fresh predictions for the next race.")
 
 # ====================== RACE ENGINEER (Improved) ======================
 with tabs[2]:
