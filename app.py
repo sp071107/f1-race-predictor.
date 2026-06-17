@@ -6,38 +6,31 @@ from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
 
-# ====================== THEME TOGGLE ======================
-theme = st.sidebar.selectbox("🌗 Theme Mode", ["Dark", "Light"], index=0)
+# ====================== IMPROVED STYLING ======================
+st.markdown("""
+<style>
+    .stApp { background-color: #0b0d12; color: #f1f5f9; }
+    .main-header { font-size: 3.2rem; font-weight: 900; color: #FF1801; text-align: center; margin-bottom: 0; letter-spacing: -0.02em; }
+    .hero-banner {
+        background: linear-gradient(135deg, #161922 0%, #1f2431 100%);
+        padding: 30px; border-radius: 16px; margin-bottom: 25px;
+        border: 2px solid #FF1801; text-align: center;
+    }
+    .pitwall-card { 
+        background: #12151e; padding: 22px; border-radius: 12px; 
+        border: 1px solid #282e3d; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    }
+    .tab-title { color: #FF1801; font-weight: 700; }
+</style>
+""", unsafe_allow_html=True)
 
-if theme == "Light":
-    st.markdown("""
-    <style>
-        .stApp { background-color: #f8fafc; color: #0f172a; }
-        .main-header { color: #FF1801 !important; }
-    </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <style>
-        .stApp { background-color: #0b0d12; color: #f1f5f9; }
-        .race-banner {
-            background: linear-gradient(90deg, #161922, #1f2431);
-            padding: 20px; border-radius: 12px; border-left: 6px solid #FF1801;
-            margin-bottom: 20px;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-# ====================== LOGO & HEADER ======================
-col_logo, col_title = st.columns([1, 4])
-with col_logo:
-    st.image("logo.png", width=180)   # Make sure logo.png is in the same folder as app.py
-
-with col_title:
-    st.markdown("<h1 style='margin: 0; font-size: 2.8rem; font-weight: 900; color: #FF1801;'>F1 PIT WALL HUB</h1>", unsafe_allow_html=True)
-    st.markdown(f"<p style='margin: 0; color: #94a3b8;'>2026 FIA Formula One World Championship</p>", unsafe_allow_html=True)
-
-st.sidebar.image("logo.png", width=140)
+# ====================== LOGO + HERO HEADER ======================
+st.markdown("""
+<div class="hero-banner">
+    <h1 class="main-header">F1 PIT WALL HUB</h1>
+    <p style="color:#94a3b8; font-size:1.1rem; margin-top:8px;">Real-Time Strategy • AI Predictions • 2026 Season</p>
+</div>
+""", unsafe_allow_html=True)
 
 # ====================== DATA FETCHERS ======================
 @st.cache_data(ttl=600)
@@ -71,7 +64,7 @@ current_year = datetime.utcnow().year
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 
-tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
+tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "⚔️ DRIVER COMPARISON", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
 # ====================== HOME ======================
 with tabs[0]:
@@ -85,7 +78,6 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("🏆 Advanced Podium Predictor + Simulator")
     
-    # Race Info, Weather, Predictions, and Driver Comparison (same as previous version)
     @st.cache_data(ttl=3600)
     def get_race_info():
         try:
@@ -233,7 +225,7 @@ with tabs[1]:
                     with cols[i]:
                         pos_emoji = ["🥇", "🥈", "🥉"][i]
                         st.markdown(f"""
-                        <div style="text-align:center; padding:15px; background:#1a1e2a; border-radius:10px; border:2px solid #FF1801;">
+                        <div style="text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid #FF1801;">
                             <h2>{pos_emoji} P{i+1}</h2>
                             <h3>{driver['Driver']}</h3>
                             <p>{driver['Team']}</p>
@@ -247,16 +239,18 @@ with tabs[1]:
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
 
-    # Driver Comparison Tool
-    st.markdown("### ⚔️ Driver Comparison Tool")
+# ====================== NEW DRIVER COMPARISON TAB ======================
+with tabs[2]:
+    st.subheader("⚔️ Driver Comparison Tool")
     driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. ANTONELLI", "L. HAMILTON", "C. LECLERC"]
+    
     colA, colB = st.columns(2)
     with colA:
         driver1 = st.selectbox("Select Driver 1", driver_list, index=0)
     with colB:
         driver2 = st.selectbox("Select Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
 
-    if st.button("Compare Drivers", type="secondary", use_container_width=True):
+    if st.button("Compare Drivers", type="primary", use_container_width=True):
         d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
         d2 = standings_df[standings_df['Driver'] == driver2].iloc[0] if not standings_df.empty else None
         if d1 is not None and d2 is not None:
@@ -274,12 +268,11 @@ with tabs[1]:
             winner = driver1 if d1['Points'] > d2['Points'] else driver2
             st.success(f"**{winner} is performing better this season.**")
 
-# ====================== RACE ENGINEER & STANDINGS ======================
-with tabs[2]:
+# ====================== RACE ENGINEER ======================
+with tabs[3]:
     st.subheader("🎙️ AI Race Engineer")
     user_input = st.text_input("Your message to the Race Engineer:", placeholder="Who is leading the championship?", key="engineer_input")
     if user_input:
-        # (Same logic as before)
         query = user_input.lower().strip()
         response = "Understood. The 2026 season is highly competitive."
         if "standings" in query or "leader" in query:
@@ -288,7 +281,8 @@ with tabs[2]:
                 response = f"**Current leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
         st.info(f"**Race Engineer:** {response}")
 
-with tabs[3]:
+# ====================== STANDINGS ======================
+with tabs[4]:
     col_d, col_c = st.columns(2)
     with col_d:
         st.subheader("Driver Standings")
