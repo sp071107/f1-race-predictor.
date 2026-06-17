@@ -6,29 +6,32 @@ from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
 
-# ====================== IMPROVED STYLING ======================
+# ====================== STYLING ======================
 st.markdown("""
 <style>
     .stApp { background-color: #0b0d12; color: #f1f5f9; }
-    .main-header { font-size: 3.2rem; font-weight: 900; color: #FF1801; text-align: center; margin-bottom: 0; letter-spacing: -0.02em; }
+    .main-header { font-size: 3.2rem; font-weight: 900; color: #FF1801; text-align: center; letter-spacing: -0.02em; }
     .hero-banner {
         background: linear-gradient(135deg, #161922 0%, #1f2431 100%);
-        padding: 30px; border-radius: 16px; margin-bottom: 25px;
+        padding: 40px 20px; border-radius: 16px; margin-bottom: 30px;
         border: 2px solid #FF1801; text-align: center;
+    }
+    .metric-card {
+        background: #12151e; padding: 20px; border-radius: 12px;
+        border: 1px solid #FF1801; text-align: center;
     }
     .pitwall-card { 
         background: #12151e; padding: 22px; border-radius: 12px; 
         border: 1px solid #282e3d; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
     }
-    .tab-title { color: #FF1801; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== LOGO + HERO HEADER ======================
+# ====================== HERO HEADER ======================
 st.markdown("""
 <div class="hero-banner">
     <h1 class="main-header">F1 PIT WALL HUB</h1>
-    <p style="color:#94a3b8; font-size:1.1rem; margin-top:8px;">Real-Time Strategy • AI Predictions • 2026 Season</p>
+    <p style="color:#94a3b8; font-size:1.2rem; margin-top:10px;">Real-Time Strategy • AI Predictions • 2026 Season</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -66,13 +69,66 @@ cons_df = get_constructor_standings(current_year)
 
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "⚔️ DRIVER COMPARISON", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
-# ====================== HOME ======================
+# ====================== HOME TAB - ENHANCED ======================
 with tabs[0]:
-    st.markdown("### Weekend Overview")
-    col1, col2, col3 = st.columns(3)
-    with col1: st.metric("Championship Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
-    with col2: st.metric("Constructors Leader", cons_df.iloc[0]['Team'] if not cons_df.empty else "N/A")
-    with col3: st.metric("Races Completed", len(standings_df))
+    st.markdown("### 🏁 Race Control Center")
+
+    # Next Race
+    @st.cache_data(ttl=3600)
+    def get_next_race():
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{current_year}.json"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                races = resp.json()['MRData']['RaceTable']['Races']
+                today = datetime.utcnow().date().isoformat()
+                for race in races:
+                    if race.get('date', '') >= today:
+                        return {
+                            "name": race['raceName'],
+                            "round": race['round'],
+                            "date": race['date'],
+                            "circuit": race['Circuit']['circuitId'].replace('_', ' ').title()
+                        }
+        except:
+            pass
+        return {"name": "Spanish Grand Prix", "round": "TBD", "date": "Soon", "circuit": "Barcelona"}
+
+    next_race = get_next_race()
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(f"""
+        <div class="pitwall-card">
+            <h2>📍 Next Race: {next_race['name']}</h2>
+            <p><strong>Round {next_race['round']}</strong> • {next_race['date']}</p>
+            <p><strong>Circuit:</strong> {next_race['circuit']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.metric("Current Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
+
+    # Season Metrics
+    st.markdown("### 📊 Season Snapshot")
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    with mcol1:
+        st.markdown(f'<div class="metric-card"><h3>🏆 Leader</h3><h2>{standings_df.iloc[0]["Driver"] if not standings_df.empty else "N/A"}</h2></div>', unsafe_allow_html=True)
+    with mcol2:
+        st.markdown(f'<div class="metric-card"><h3>🔧 Constructors</h3><h2>{cons_df.iloc[0]["Team"] if not cons_df.empty else "N/A"}</h2></div>', unsafe_allow_html=True)
+    with mcol3:
+        st.metric("Races Completed", len(standings_df))
+    with mcol4:
+        st.metric("Active Drivers", len(standings_df))
+
+    st.markdown("### ⚡ Quick Navigation")
+    qc1, qc2, qc3 = st.columns(3)
+    with qc1:
+        st.button("🏆 Go to Podium Predictor", use_container_width=True)
+    with qc2:
+        st.button("⚔️ Compare Drivers", use_container_width=True)
+    with qc3:
+        st.button("🎙️ Talk to Race Engineer", use_container_width=True)
 
 # ====================== PODIUM PREDICTOR ======================
 with tabs[1]:
@@ -239,16 +295,15 @@ with tabs[1]:
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
 
-# ====================== NEW DRIVER COMPARISON TAB ======================
+# ====================== DRIVER COMPARISON ======================
 with tabs[2]:
     st.subheader("⚔️ Driver Comparison Tool")
     driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. ANTONELLI", "L. HAMILTON", "C. LECLERC"]
-    
     colA, colB = st.columns(2)
     with colA:
-        driver1 = st.selectbox("Select Driver 1", driver_list, index=0)
+        driver1 = st.selectbox("Driver 1", driver_list, index=0)
     with colB:
-        driver2 = st.selectbox("Select Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
+        driver2 = st.selectbox("Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
 
     if st.button("Compare Drivers", type="primary", use_container_width=True):
         d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
@@ -271,11 +326,12 @@ with tabs[2]:
 # ====================== RACE ENGINEER ======================
 with tabs[3]:
     st.subheader("🎙️ AI Race Engineer")
+    st.caption("Ask anything about the race, drivers, strategy, or standings")
     user_input = st.text_input("Your message to the Race Engineer:", placeholder="Who is leading the championship?", key="engineer_input")
     if user_input:
         query = user_input.lower().strip()
         response = "Understood. The 2026 season is highly competitive."
-        if "standings" in query or "leader" in query:
+        if any(word in query for word in ["standings", "leader", "championship"]):
             if not standings_df.empty:
                 leader = standings_df.iloc[0]
                 response = f"**Current leader:** {leader['Driver']} ({leader['Team']}) with {leader['Points']} points."
@@ -291,4 +347,4 @@ with tabs[4]:
         st.subheader("Constructor Standings")
         st.dataframe(cons_df, use_container_width=True, hide_index=True)
 
-st.caption("Data from Ergast API • Built with ❤️ for F1 fans")
+st.caption("F1 Pit Wall Hub • Data from Ergast API")
