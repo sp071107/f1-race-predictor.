@@ -6,25 +6,38 @@ from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
 
-# ====================== STYLING ======================
+# ====================== PROFESSIONAL STYLING ======================
 st.markdown("""
 <style>
     .stApp { background-color: #0b0d12; color: #f1f5f9; }
-    .main-header { font-size: 3.4rem; font-weight: 900; color: #FF1801; text-align: center; letter-spacing: -0.03em; }
+    .main-header { 
+        font-size: 3.4rem; font-weight: 900; color: #FF1801; 
+        text-align: center; letter-spacing: -0.03em; margin-bottom: 0;
+    }
     .hero-banner {
         background: linear-gradient(135deg, #161922 0%, #1f2431 100%);
         padding: 35px; border-radius: 16px; margin-bottom: 25px;
         border: 2px solid #FF1801; text-align: center;
+        box-shadow: 0 8px 25px rgba(255, 24, 1, 0.15);
     }
-    .pitwall-card { background: #12151e; padding: 24px; border-radius: 14px; border: 1px solid #FF1801; }
+    .pitwall-card { 
+        background: #12151e; padding: 24px; border-radius: 14px; 
+        border: 1px solid #FF1801; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .metric-card {
+        background: #1a1e2a; padding: 18px; border-radius: 12px;
+        border: 1px solid #FF1801; text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== HERO ======================
+# ====================== HERO HEADER ======================
 st.markdown("""
 <div class="hero-banner">
     <h1 class="main-header">F1 PIT WALL HUB</h1>
-    <p style="color:#94a3b8; font-size:1.25rem; margin-top:12px;">Real-Time AI Predictions • Strategy • 2026 Season</p>
+    <p style="color:#94a3b8; font-size:1.25rem; margin-top:12px;">
+        Real-Time AI Predictions • Strategy • 2026 Season
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -65,6 +78,7 @@ tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "⚔️ DRIVER COMPARISON"
 # ====================== HOME ======================
 with tabs[0]:
     st.markdown("### 🏁 Race Control Center")
+    
     @st.cache_data(ttl=3600)
     def get_next_race():
         try:
@@ -75,8 +89,12 @@ with tabs[0]:
                 today = datetime.utcnow().date().isoformat()
                 for race in races:
                     if race.get('date', '') >= today:
-                        return {"name": race['raceName'], "round": race['round'], "date": race['date'], 
-                                "circuit": race['Circuit']['circuitId'].replace('_', ' ').title()}
+                        return {
+                            "name": race['raceName'],
+                            "round": race['round'],
+                            "date": race['date'],
+                            "circuit": race['Circuit']['circuitId'].replace('_', ' ').title()
+                        }
         except:
             pass
         return {"name": "Spanish Grand Prix", "round": "TBD", "date": "Soon", "circuit": "Barcelona"}
@@ -93,14 +111,18 @@ with tabs[0]:
         </div>
         """, unsafe_allow_html=True)
     with col2:
-        st.metric("🏆 Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
+        st.metric("🏆 Championship Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
 
     st.markdown("### 📊 Season Snapshot")
     m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("Driver Leader", standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A")
-    with m2: st.metric("Constructors Leader", cons_df.iloc[0]['Team'] if not cons_df.empty else "N/A")
-    with m3: st.metric("Races Completed", len(standings_df))
-    with m4: st.metric("Active Drivers", len(standings_df))
+    with m1:
+        st.markdown(f'<div class="metric-card"><h3>Driver Leader</h3><h2>{standings_df.iloc[0]["Driver"] if not standings_df.empty else "N/A"}</h2></div>', unsafe_allow_html=True)
+    with m2:
+        st.markdown(f'<div class="metric-card"><h3>Constructors Leader</h3><h2>{cons_df.iloc[0]["Team"] if not cons_df.empty else "N/A"}</h2></div>', unsafe_allow_html=True)
+    with m3:
+        st.metric("Races Completed", len(standings_df))
+    with m4:
+        st.metric("Active Drivers", len(standings_df))
 
 # ====================== PODIUM PREDICTOR ======================
 with tabs[1]:
@@ -264,15 +286,6 @@ with tabs[1]:
                 st.markdown("### Full Grid Predictions")
                 st.dataframe(pred_df, use_container_width=True, hide_index=True)
 
-                # DOWNLOAD BUTTON
-                csv = pred_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Predictions as CSV",
-                    data=csv,
-                    file_name=f"f1_predictions_{next_race['name'].replace(' ', '_')}.csv",
-                    mime="text/csv"
-                )
-
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
 
@@ -289,7 +302,7 @@ with tabs[2]:
     if st.button("Compare Drivers", type="primary", use_container_width=True):
         d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
         d2 = standings_df[standings_df['Driver'] == driver2].iloc[0] if not standings_df.empty else None
-        if d1 and d2:
+        if d1 is not None and d2 is not None:
             c1, c2 = st.columns(2)
             with c1:
                 st.metric(driver1, f"P{d1['Pos']}", f"{d1['Points']} pts")
