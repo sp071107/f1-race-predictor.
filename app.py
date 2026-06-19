@@ -86,15 +86,131 @@ st.markdown("""
         background:#12151e; border-left:4px solid #FF1801; border-radius:10px;
         padding:10px 14px; margin-bottom:14px;
     }
+
+    /* ===== ANIMATIONS (pure CSS, zero cost, zero dependencies) ===== */
+    @keyframes fadeSlideUp {
+        from { opacity: 0; transform: translateY(14px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+    }
+    @keyframes pulseGlow {
+        0%, 100% { box-shadow: 0 0 6px rgba(255,24,1,0.35); }
+        50%      { box-shadow: 0 0 18px rgba(255,24,1,0.85); }
+    }
+    @keyframes podiumRise {
+        from { opacity: 0; transform: translateY(28px) scale(0.94); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .hero-banner, .pitwall-card, .metric-card, .driver-card {
+        animation: fadeSlideUp 0.55s ease-out both;
+    }
+    .driver-card { transition: transform 0.25s ease, box-shadow 0.25s ease; }
+    .driver-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+    }
+
+    .live-dot {
+        display:inline-block; width:9px; height:9px; border-radius:50%;
+        background:#22c55e; margin-right:6px; animation: pulseGlow 1.6s infinite;
+    }
+
+    /* Team-colour styled standings rows (replaces plain st.dataframe) */
+    .race-table { width:100%; animation: fadeIn 0.6s ease-out both; }
+    .race-row {
+        display:flex; align-items:center; gap:14px;
+        background: linear-gradient(135deg, #12151e 0%, #161a24 100%);
+        border-radius: 10px; padding: 12px 18px; margin-bottom: 8px;
+        animation: fadeSlideUp 0.5s ease-out both;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .race-row:hover {
+        transform: translateX(4px);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+    }
+    .race-row .pos {
+        font-weight: 900; font-size: 1.05rem; width: 34px; text-align:center;
+        color:#f1f5f9;
+    }
+    .race-row .team-chip {
+        width:6px; height:34px; border-radius:4px; flex-shrink:0;
+    }
+    .race-row .name { font-weight:700; flex: 1.4; }
+    .race-row .team-name { color:#94a3b8; flex:1.3; font-size:0.92rem; }
+    .race-row .points { font-weight:900; font-size:1.05rem; min-width:96px; text-align:right; }
+    .race-row .wins { color:#94a3b8; min-width:60px; text-align:right; font-size:0.85rem; }
+    .race-row.header-row {
+        background: transparent; color:#64748b; font-size:0.72rem;
+        font-weight:800; letter-spacing:0.08em; text-transform:uppercase;
+        animation: none; padding-bottom:0; padding-top:0; margin-bottom: 4px;
+    }
+    .race-row.header-row:hover { transform:none; box-shadow:none; }
+    .delta-up   { color:#22c55e; font-weight:800; }
+    .delta-down { color:#ef4444; font-weight:800; }
+    .delta-flat { color:#64748b; font-weight:800; }
+
+    .podium-card { animation: podiumRise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .podium-card:hover { transform: translateY(-6px) scale(1.02); transition: transform 0.25s ease; }
 </style>
 """, unsafe_allow_html=True)
+
+def render_styled_table(rows, show_wins=True, delta_col=None):
+    """
+    Renders a team-coloured, animated HTML standings/results table.
+    rows: list/iterable of dicts or pandas rows with Pos, Driver and/or Team, Points, Wins(optional)
+    delta_col: optional list of ints (position change) aligned with rows, for up/down arrows
+    Pure HTML/CSS — no extra libraries, no external calls, no cost.
+    """
+    html = ['<div class="race-table">']
+    html.append(
+        '<div class="race-row header-row">'
+        '<span class="pos">#</span>'
+        '<span class="team-chip" style="background:transparent;"></span>'
+        '<span class="name">Driver</span>'
+        '<span class="team-name">Team</span>'
+        + ('<span class="wins">Wins</span>' if show_wins else '')
+        + '<span class="points">Points</span>'
+        '</div>'
+    )
+    for i, row in enumerate(rows):
+        row = dict(row)
+        meta = team_meta(row.get('Team', ''))
+        delay = f"{min(i * 0.04, 0.6):.2f}s"
+        delta_html = ""
+        if delta_col is not None and i < len(delta_col):
+            d = delta_col[i]
+            if d > 0:
+                delta_html = f'<span class="delta-up">&#9650;{d}</span>'
+            elif d < 0:
+                delta_html = f'<span class="delta-down">&#9660;{abs(d)}</span>'
+            else:
+                delta_html = '<span class="delta-flat">&mdash;</span>'
+        driver_or_team = row.get('Driver', row.get('Team', ''))
+        team_label = row.get('Team', '') if 'Driver' in row else ''
+        wins_html = f'<span class="wins">{int(row.get("Wins", 0))}</span>' if show_wins else ''
+        html.append(
+            f'<div class="race-row" style="animation-delay:{delay};">'
+            f'<span class="pos">{row.get("Pos", "-")}</span>'
+            f'<span class="team-chip" style="background:{meta["color"]};"></span>'
+            f'<span class="name">{meta["emoji"]} {driver_or_team}</span>'
+            f'<span class="team-name">{team_label}</span>'
+            f'{wins_html}'
+            f'<span class="points" style="color:{meta["color"]};">{int(row.get("Points", 0))} {delta_html}</span>'
+            f'</div>'
+        )
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 # ====================== HERO HEADER ======================
 st.markdown("""
 <div class="hero-banner">
     <h1 class="main-header">F1 PIT WALL HUB</h1>
     <p style="color:#94a3b8; font-size:1.25rem; margin-top:12px;">
-        Real-Time AI Predictions • Strategy • 2026 Season • 100% Free, Forever
+        <span class="live-dot"></span>Real-Time AI Predictions • Strategy • 2026 Season • 100% Free, Forever
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -370,8 +486,9 @@ with tabs[1]:
                     with cols[i]:
                         pos_emoji = ["🥇", "🥈", "🥉"][i]
                         dmeta = team_meta(driver['Team'])
+                        delay = f"{i * 0.15:.2f}s"
                         st.markdown(f"""
-                        <div style="text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
+                        <div class="podium-card" style="animation-delay:{delay}; text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
                             <h2>{pos_emoji} P{i+1}</h2>
                             <h3>{dmeta['emoji']} {driver['Driver']}</h3>
                             <p style="color:{dmeta['color']}; font-weight:700;">{driver['Team']}</p>
@@ -380,7 +497,13 @@ with tabs[1]:
                         """, unsafe_allow_html=True)
 
                 st.markdown("### Full Grid Predictions")
-                st.dataframe(pred_df, use_container_width=True, hide_index=True)
+                pred_df_display = pred_df.rename(columns={"Predicted Finish": "Pos", "Positions Gained": "Delta"})
+                deltas = pred_df_display["Delta"].tolist()
+                render_styled_table(
+                    pred_df_display.to_dict("records"),
+                    show_wins=False,
+                    delta_col=deltas
+                )
 
             except Exception as e:
                 st.error(f"Prediction error: {str(e)}")
@@ -458,13 +581,14 @@ with tabs[4]:
     races = get_recent_results(current_year)
     if races:
         for race in reversed(races[-5:]):
-            st.write(f"**{race['raceName']}** (Round {race['round']})")
-            df_results = pd.DataFrame([{
+            st.markdown(f"#### 🏁 {race['raceName']} (Round {race['round']})")
+            result_rows = [{
                 "Pos": res['position'],
                 "Driver": f"{res['Driver']['givenName']} {res['Driver']['familyName']}",
-                "Team": res['Constructor']['name']
-            } for res in race.get('Results', [])[:10]])
-            st.dataframe(df_results, use_container_width=True, hide_index=True)
+                "Team": res['Constructor']['name'],
+                "Points": res.get('points', 0)
+            } for res in race.get('Results', [])[:10]]
+            render_styled_table(result_rows, show_wins=False)
     else:
         st.info("Historical data is temporarily unavailable. Try refreshing shortly.")
 
@@ -578,9 +702,15 @@ with tabs[6]:
     col_d, col_c = st.columns(2)
     with col_d:
         st.subheader("Driver Standings")
-        st.dataframe(standings_df, use_container_width=True, hide_index=True)
+        if not standings_df.empty:
+            render_styled_table(standings_df.to_dict("records"), show_wins=True)
+        else:
+            st.info("Driver standings temporarily unavailable.")
     with col_c:
         st.subheader("Constructor Standings")
-        st.dataframe(cons_df, use_container_width=True, hide_index=True)
+        if not cons_df.empty:
+            render_styled_table(cons_df.to_dict("records"), show_wins=True)
+        else:
+            st.info("Constructor standings temporarily unavailable.")
 
 st.caption("F1 Pit Wall Hub • Completely Free • Powered by Public APIs (Jolpi/Ergast + OpenF1) • No API Keys Required")
