@@ -163,6 +163,7 @@ def render_styled_table(rows, show_wins=True, delta_col=None):
     Renders a team-coloured, animated HTML standings/results table.
     rows: list/iterable of dicts or pandas rows with Pos, Driver and/or Team, Points, Wins(optional)
     delta_col: optional list of ints (position change) aligned with rows, for up/down arrows
+    Automatically highlights the user's favourite driver/team row (session-based, free).
     Pure HTML/CSS — no extra libraries, no external calls, no cost.
     """
     html = ['<div class="race-table">']
@@ -192,11 +193,16 @@ def render_styled_table(rows, show_wins=True, delta_col=None):
         driver_or_team = row.get('Driver', row.get('Team', ''))
         team_label = row.get('Team', '') if 'Driver' in row else ''
         wins_html = f'<span class="wins">{int(row.get("Wins", 0))}</span>' if show_wins else ''
+
+        is_fav = is_favorite_driver(row.get('Driver', '')) or is_favorite_team(row.get('Team', ''))
+        row_class = "race-row fav-glow" if is_fav else "race-row"
+        star = "⭐ " if is_fav else ""
+
         html.append(
-            f'<div class="race-row" style="animation-delay:{delay};">'
+            f'<div class="{row_class}" style="animation-delay:{delay};">'
             f'<span class="pos">{row.get("Pos", "-")}</span>'
             f'<span class="team-chip" style="background:{meta["color"]};"></span>'
-            f'<span class="name">{meta["emoji"]} {driver_or_team}</span>'
+            f'<span class="name">{star}{meta["emoji"]} {driver_or_team}</span>'
             f'<span class="team-name">{team_label}</span>'
             f'{wins_html}'
             f'<span class="points" style="color:{meta["color"]};">{int(row.get("Points", 0))} {delta_html}</span>'
@@ -326,6 +332,87 @@ standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 next_race = get_next_race(current_year)
 
+# ====================== PERSONALIZATION (FREE: session_state + URL query params, no DB/login) ======================
+# Favorites live per-browser-session via st.session_state, and are mirrored into the URL
+# query string so a bookmarked/shared link reopens with the same picks. Nothing is stored
+# server-side, so this scales to any number of public visitors at zero cost.
+driver_options = ["(none)"] + (standings_df['Driver'].tolist() if not standings_df.empty else [])
+team_options = ["(none)"] + (sorted(standings_df['Team'].unique().tolist()) if not standings_df.empty else [])
+
+qp = st.query_params
+if "fav_driver" not in st.session_state:
+    st.session_state.fav_driver = qp.get("driver", "(none)")
+if "fav_team" not in st.session_state:
+    st.session_state.fav_team = qp.get("team", "(none)")
+if "use_team_theme" not in st.session_state:
+    st.session_state.use_team_theme = qp.get("theme", "0") == "1"
+
+with st.sidebar:
+    st.markdown("## 🏎️ Your Garage")
+    st.caption("Pick your favorites — saved for this session and shareable via link.")
+
+    sel_driver = st.selectbox(
+        "⭐ Favorite Driver",
+        driver_options,
+        index=driver_options.index(st.session_state.fav_driver) if st.session_state.fav_driver in driver_options else 0
+    )
+    sel_team = st.selectbox(
+        "🏁 Favorite Team",
+        team_options,
+        index=team_options.index(st.session_state.fav_team) if st.session_state.fav_team in team_options else 0
+    )
+    sel_theme = st.checkbox("🎨 Theme accent = my team's colour", value=st.session_state.use_team_theme)
+
+    if (sel_driver != st.session_state.fav_driver or sel_team != st.session_state.fav_team
+            or sel_theme != st.session_state.use_team_theme):
+        st.session_state.fav_driver = sel_driver
+        st.session_state.fav_team = sel_team
+        st.session_state.use_team_theme = sel_theme
+        st.query_params["driver"] = sel_driver
+        st.query_params["team"] = sel_team
+        st.query_params["theme"] = "1" if sel_theme else "0"
+        st.rerun()
+
+    if st.session_state.fav_driver != "(none)" or st.session_state.fav_team != "(none)":
+        st.divider()
+        st.caption("🔗 Bookmark this page's URL to keep these picks next time.")
+        if st.button("🗑️ Clear my picks", use_container_width=True):
+            st.session_state.fav_driver = "(none)"
+            st.session_state.fav_team = "(none)"
+            st.session_state.use_team_theme = False
+            st.query_params.clear()
+            st.rerun()
+
+FAV_DRIVER = st.session_state.fav_driver
+FAV_TEAM = st.session_state.fav_team
+
+# Resolve an effective accent colour: favourite team's colour if the theme toggle is on,
+# otherwise the default F1-red branding. Pure CSS variable swap — no extra cost either way.
+ACCENT_COLOR = "#FF1801"
+if st.session_state.use_team_theme and FAV_TEAM != "(none)":
+    ACCENT_COLOR = team_meta(FAV_TEAM)["color"]
+
+st.markdown(f"""
+<style>
+    header {{ border-top: 4px solid {ACCENT_COLOR} !important; }}
+    .main-header {{ color: {ACCENT_COLOR} !important; }}
+    .hero-banner {{ border-color: {ACCENT_COLOR} !important; box-shadow: 0 8px 25px {ACCENT_COLOR}26 !important; }}
+    .pitwall-card, .metric-card {{ border-color: {ACCENT_COLOR} !important; }}
+    .chat-bubble-bot {{ border-left-color: {ACCENT_COLOR} !important; }}
+    .stButton button[kind="primary"] {{ background-color: {ACCENT_COLOR} !important; border-color: {ACCENT_COLOR} !important; }}
+    .fav-glow {{
+        border: 2px solid {ACCENT_COLOR} !important;
+        box-shadow: 0 0 14px {ACCENT_COLOR}55 !important;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+def is_favorite_driver(driver_name):
+    return FAV_DRIVER != "(none)" and driver_name == FAV_DRIVER
+
+def is_favorite_team(team_name):
+    return FAV_TEAM != "(none)" and team_meta(team_name) == team_meta(FAV_TEAM) and team_name == FAV_TEAM
+
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
 
 # ====================== HOME ======================
@@ -344,6 +431,43 @@ with tabs[0]:
     with col2:
         leader_name = standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A"
         st.metric("🏆 Championship Leader", leader_name)
+
+    # --- Personalized "Your Garage" snapshot (only shown once a favourite is picked) ---
+    if (FAV_DRIVER != "(none)" or FAV_TEAM != "(none)") and not standings_df.empty:
+        st.markdown("### ⭐ Your Garage")
+        gcol1, gcol2 = st.columns(2)
+        with gcol1:
+            if FAV_DRIVER != "(none)":
+                drow = standings_df[standings_df['Driver'] == FAV_DRIVER]
+                if not drow.empty:
+                    d = drow.iloc[0]
+                    dmeta = team_meta(d['Team'])
+                    st.markdown(f"""
+                    <div class="pitwall-card fav-glow">
+                        <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em;">Your Driver</div>
+                        <h2>{dmeta['emoji']} {d['Driver']}</h2>
+                        <p style="color:{dmeta['color']}; font-weight:700;">{d['Team']}</p>
+                        <p>P{int(d['Pos'])} • {int(d['Points'])} pts • {int(d.get('Wins', 0))} win(s)</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.caption("Pick a favourite driver in the sidebar to see them here.")
+        with gcol2:
+            if FAV_TEAM != "(none)":
+                trow = cons_df[cons_df['Team'] == FAV_TEAM]
+                tmeta = team_meta(FAV_TEAM)
+                pts_text = f"{int(trow.iloc[0]['Points'])} pts" if not trow.empty else "—"
+                pos_text = f"P{int(trow.iloc[0]['Pos'])}" if not trow.empty else "—"
+                st.markdown(f"""
+                <div class="pitwall-card fav-glow">
+                    <div style="font-size:0.8rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em;">Your Team</div>
+                    <h2>{tmeta['emoji']} {FAV_TEAM}</h2>
+                    <p style="color:{tmeta['color']}; font-weight:700;">Constructors' Championship</p>
+                    <p>{pos_text} • {pts_text}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.caption("Pick a favourite team in the sidebar to see them here.")
 
     st.markdown("### 📊 Season Snapshot")
     m1, m2, m3, m4 = st.columns(4)
@@ -531,11 +655,15 @@ with tabs[2]:
             cols = st.columns(cards_per_row)
             for col, (_, d) in zip(cols, row_chunk.iterrows()):
                 meta = team_meta(d['Team'])
+                fav = is_favorite_driver(d['Driver']) or is_favorite_team(d['Team'])
+                card_class = "driver-card fav-glow" if fav else "driver-card"
+                star = "⭐ " if fav else ""
+                border_style = "" if fav else f"border:1px solid {meta['color']}; border-top:5px solid {meta['color']};"
                 with col:
                     st.markdown(f"""
-                    <div class="driver-card" style="border:1px solid {meta['color']}; border-top:5px solid {meta['color']};">
+                    <div class="{card_class}" style="{border_style}">
                         <span class="badge" style="background:{meta['color']};">{meta['short']}</span>
-                        <h3>{meta['emoji']} {d['Driver']}</h3>
+                        <h3>{star}{meta['emoji']} {d['Driver']}</h3>
                         <div class="sub">{d['Team']} • {d.get('Nationality', '—')}</div>
                         <div class="pts" style="color:{meta['color']};">P{int(d['Pos'])} · {int(d['Points'])} pts</div>
                         <div class="sub">🏁 {int(d.get('Wins', 0))} win(s) this season</div>
@@ -546,9 +674,10 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("⚔️ Driver Comparison Tool")
     driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. Antonelli", "L. Hamilton"]
+    default_idx1 = driver_list.index(FAV_DRIVER) if FAV_DRIVER in driver_list else 0
     colA, colB = st.columns(2)
     with colA:
-        driver1 = st.selectbox("Driver 1", driver_list, index=0)
+        driver1 = st.selectbox("Driver 1", driver_list, index=default_idx1)
     with colB:
         driver2 = st.selectbox("Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
 
@@ -625,6 +754,24 @@ with tabs[5]:
         # Greeting
         if q in ("hi", "hello", "hey", "yo", "sup") or q.startswith(("hi ", "hello ", "hey ")):
             return "Copy that — Race Engineer online. Ask me about standings, a specific driver, a team, or the next race."
+
+        # "My driver" / "my team" — uses the favourites picked in the sidebar
+        if any(k in q for k in ["my driver", "how's my driver", "how is my driver"]):
+            if FAV_DRIVER != "(none)" and not standings_df.empty:
+                drow = standings_df[standings_df['Driver'] == FAV_DRIVER]
+                if not drow.empty:
+                    d = drow.iloc[0]
+                    return (f"Your driver **{d['Driver']}** ({d['Team']}) is P{int(d['Pos'])} "
+                            f"with {int(d['Points'])} points and {int(d.get('Wins', 0))} win(s) this season.")
+            return "You haven't picked a favourite driver yet — set one in the sidebar under 'Your Garage'."
+
+        if any(k in q for k in ["my team", "how's my team", "how is my team"]):
+            if FAV_TEAM != "(none)" and not cons_df.empty:
+                trow = cons_df[cons_df['Team'] == FAV_TEAM]
+                if not trow.empty:
+                    t = trow.iloc[0]
+                    return f"Your team **{FAV_TEAM}** is P{int(t['Pos'])} with {int(t['Points'])} constructors points."
+            return "You haven't picked a favourite team yet — set one in the sidebar under 'Your Garage'."
 
         # Next race / schedule
         if any(k in q for k in ["next race", "next gp", "schedule", "when is the race", "upcoming"]):
