@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -327,7 +326,7 @@ standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 next_race = get_next_race(current_year)
 
-tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS"])
+tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT"])
 
 # ====================== HOME ======================
 with tabs[0]:
@@ -713,5 +712,228 @@ with tabs[6]:
             render_styled_table(cons_df.to_dict("records"), show_wins=True)
         else:
             st.info("Constructor standings temporarily unavailable.")
+
+# ====================== STATS VAULT (NEW: head-to-head, on this day, circuit history, career trajectory) ======================
+with tabs[7]:
+    st.subheader("📚 Historical Stats Vault")
+    st.caption("Free forever — powered by the same Jolpi/Ergast API used elsewhere in this app, no keys required.")
+
+    @st.cache_data(ttl=86400)
+    def vault_get_driver_index():
+        try:
+            resp = requests.get("https://api.jolpi.ca/ergast/f1/drivers.json?limit=2000", timeout=8).json()
+            drivers = resp['MRData']['DriverTable']['Drivers']
+            return {f"{d.get('givenName','')} {d.get('familyName','')}".strip(): d['driverId'] for d in drivers}
+        except Exception:
+            return {}
+
+    @st.cache_data(ttl=86400)
+    def vault_get_driver_results(driver_id):
+        try:
+            resp = requests.get(f"https://api.jolpi.ca/ergast/f1/drivers/{driver_id}/results.json?limit=1000", timeout=8).json()
+            races = resp['MRData']['RaceTable']['Races']
+            rows = []
+            for r in races:
+                res = r['Results'][0]
+                rows.append({
+                    "season": int(r['season']),
+                    "round": int(r['round']),
+                    "race": r['raceName'],
+                    "grid": int(res.get('grid', 0)),
+                    "position": res.get('positionText', 'N/A'),
+                    "points": float(res.get('points', 0)),
+                    "constructor": res['Constructor']['name'],
+                    "status": res.get('status', '')
+                })
+            return pd.DataFrame(rows)
+        except Exception:
+            return pd.DataFrame()
+
+    @st.cache_data(ttl=86400)
+    def vault_on_this_day(month, day):
+        try:
+            results = []
+            for year in range(1950, datetime.utcnow().year):
+                resp = requests.get(f"https://api.jolpi.ca/ergast/f1/{year}.json?limit=100", timeout=5).json()
+                races = resp['MRData']['RaceTable']['Races']
+                for r in races:
+                    d = r.get('date')
+                    if d:
+                        dt = datetime.strptime(d, "%Y-%m-%d")
+                        if dt.month == month and dt.day == day:
+                            results.append({"year": year, "race": r['raceName'], "circuit": r['Circuit']['circuitName'], "round": r['round']})
+            return results
+        except Exception:
+            return []
+
+    @st.cache_data(ttl=86400)
+    def vault_on_this_day_winner(year, round_num):
+        try:
+            resp = requests.get(f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/results.json?limit=5", timeout=5).json()
+            races = resp['MRData']['RaceTable']['Races']
+            if races and races[0]['Results']:
+                w = races[0]['Results'][0]
+                return f"{w['Driver']['givenName']} {w['Driver']['familyName']} ({w['Constructor']['name']})"
+            return "Unknown"
+        except Exception:
+            return "Unknown"
+
+    @st.cache_data(ttl=86400)
+    def vault_get_circuit_index():
+        try:
+            resp = requests.get("https://api.jolpi.ca/ergast/f1/circuits.json?limit=200", timeout=8).json()
+            circuits = resp['MRData']['CircuitTable']['Circuits']
+            return {c['circuitName']: c['circuitId'] for c in circuits}
+        except Exception:
+            return {}
+
+    @st.cache_data(ttl=86400)
+    def vault_get_circuit_winners(circuit_id):
+        try:
+            resp = requests.get(f"https://api.jolpi.ca/ergast/f1/circuits/{circuit_id}/results/1.json?limit=200", timeout=8).json()
+            races = resp['MRData']['RaceTable']['Races']
+            rows = []
+            for r in races:
+                w = r['Results'][0]
+                rows.append({
+                    "season": int(r['season']),
+                    "race": r['raceName'],
+                    "winner": f"{w['Driver']['givenName']} {w['Driver']['familyName']}",
+                    "constructor": w['Constructor']['name']
+                })
+            return pd.DataFrame(rows).sort_values("season", ascending=False).reset_index(drop=True)
+        except Exception:
+            return pd.DataFrame()
+
+    vault_tabs = st.tabs(["⚔️ HEAD-TO-HEAD", "📅 ON THIS DAY", "🏟️ CIRCUIT HISTORY", "📈 CAREER TRAJECTORY"])
+
+    # --- HEAD-TO-HEAD COMPARISON ---
+    with vault_tabs[0]:
+        st.markdown("#### ⚔️ Driver Head-to-Head Career Comparison")
+        driver_index = vault_get_driver_index()
+        if not driver_index:
+            st.warning("📡 Could not reach the historical data feed right now. Try again shortly.")
+        else:
+            names = sorted(driver_index.keys())
+            colA, colB = st.columns(2)
+            with colA:
+                vault_driver_a = st.selectbox("Driver A", names, index=names.index("Lewis Hamilton") if "Lewis Hamilton" in names else 0, key="vault_h2h_a")
+            with colB:
+                vault_driver_b = st.selectbox("Driver B", names, index=names.index("Max Verstappen") if "Max Verstappen" in names else 1, key="vault_h2h_b")
+
+            if st.button("🔍 Compare Careers", key="vault_h2h_btn"):
+                df_a = vault_get_driver_results(driver_index[vault_driver_a])
+                df_b = vault_get_driver_results(driver_index[vault_driver_b])
+
+                def vault_summarize(df):
+                    if df.empty:
+                        return {"Races": 0, "Wins": 0, "Podiums": 0, "Poles (P1 starts)": 0, "Total Points": 0.0, "DNFs": 0}
+                    wins = (df['position'] == '1').sum()
+                    podiums = df['position'].isin(['1', '2', '3']).sum()
+                    poles = (df['grid'] == 1).sum()
+                    points = df['points'].sum()
+                    dnfs = (~df['status'].str.contains("Finished|\\+", regex=True, na=False)).sum()
+                    return {"Races": len(df), "Wins": int(wins), "Podiums": int(podiums), "Poles (P1 starts)": int(poles), "Total Points": float(points), "DNFs": int(dnfs)}
+
+                stats_a, stats_b = vault_summarize(df_a), vault_summarize(df_b)
+                compare_df = pd.DataFrame({vault_driver_a: stats_a, vault_driver_b: stats_b})
+                st.dataframe(compare_df, use_container_width=True)
+
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #38bdf8;"><h3>🏆 Win Edge</h3><h2>{vault_driver_a if stats_a["Wins"] >= stats_b["Wins"] else vault_driver_b}</h2><small>{stats_a["Wins"]} vs {stats_b["Wins"]} wins</small></div>', unsafe_allow_html=True)
+                with m2:
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #a855f7;"><h3>🥇 Points Edge</h3><h2>{vault_driver_a if stats_a["Total Points"] >= stats_b["Total Points"] else vault_driver_b}</h2><small>{stats_a["Total Points"]:.0f} vs {stats_b["Total Points"]:.0f} pts</small></div>', unsafe_allow_html=True)
+                with m3:
+                    rate_a = (stats_a["Podiums"]/stats_a["Races"]*100 if stats_a["Races"] else 0)
+                    rate_b = (stats_b["Podiums"]/stats_b["Races"]*100 if stats_b["Races"] else 0)
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #22c55e;"><h3>🎯 Podium Rate</h3><h2>{rate_a:.1f}% vs {rate_b:.1f}%</h2><small>{vault_driver_a} vs {vault_driver_b}</small></div>', unsafe_allow_html=True)
+
+    # --- ON THIS DAY ---
+    with vault_tabs[1]:
+        st.markdown("#### 📅 On This Day In Formula 1")
+        vault_pick_today = st.checkbox("Use today's date", value=True, key="vault_otd_today")
+        if vault_pick_today:
+            today_dt = datetime.utcnow()
+            otd_month, otd_day = today_dt.month, today_dt.day
+        else:
+            vault_custom_date = st.date_input("Pick a date", value=datetime.utcnow().date(), key="vault_otd_custom")
+            otd_month, otd_day = vault_custom_date.month, vault_custom_date.day
+
+        if st.button("📡 Search Race History", key="vault_otd_btn"):
+            with st.spinner("Scanning decades of race calendars..."):
+                events = vault_on_this_day(otd_month, otd_day)
+            if not events:
+                st.info("📻 No Grands Prix were held on this calendar date in F1 history. Try another date.")
+            else:
+                st.success(f"Found {len(events)} race(s) held on this date across F1 history.")
+                for ev in sorted(events, key=lambda x: x['year'], reverse=True):
+                    winner = vault_on_this_day_winner(ev['year'], ev['round'])
+                    st.markdown(
+                        f'<div class="pitwall-card" style="border-left:4px solid #FF1801; margin-bottom:10px;">'
+                        f'<h3>{ev["year"]} — {ev["race"]}</h3>'
+                        f'<p style="font-size:1.05rem;">🏆 Winner: {winner}</p>'
+                        f'<small>📍 {ev["circuit"]}</small></div>',
+                        unsafe_allow_html=True
+                    )
+
+    # --- CIRCUIT HISTORY ---
+    with vault_tabs[2]:
+        st.markdown("#### 🏟️ Circuit History: Past Winners")
+        circuit_index = vault_get_circuit_index()
+        if not circuit_index:
+            st.warning("📡 Could not reach the circuit data feed right now. Try again shortly.")
+        else:
+            circuit_names = sorted(circuit_index.keys())
+            default_idx = next((i for i, c in enumerate(circuit_names) if "Catalunya" in c or "Barcelona" in c), 0)
+            vault_chosen_circuit = st.selectbox("Select Circuit", circuit_names, index=default_idx, key="vault_circuit_select")
+            if st.button("🏁 Load Winners List", key="vault_circuit_btn"):
+                with st.spinner("Pulling circuit archives..."):
+                    df_winners = vault_get_circuit_winners(circuit_index[vault_chosen_circuit])
+                if df_winners.empty:
+                    st.info("📻 No recorded Grand Prix winners found for this circuit.")
+                else:
+                    top_winner_driver = df_winners['winner'].value_counts().idxmax()
+                    top_winner_count = df_winners['winner'].value_counts().max()
+                    st.markdown(
+                        f'<div class="pitwall-card" style="border-left:4px solid #FF8000;">'
+                        f'<h3>👑 Most Successful Driver Here</h3>'
+                        f'<h2>{top_winner_driver}</h2>'
+                        f'<small>{top_winner_count} win(s) at this circuit</small></div>',
+                        unsafe_allow_html=True
+                    )
+                    st.dataframe(df_winners, hide_index=True, use_container_width=True)
+
+    # --- CAREER TRAJECTORY ---
+    with vault_tabs[3]:
+        st.markdown("#### 📈 Driver Career Trajectory (Points Per Season)")
+        driver_index_traj = vault_get_driver_index()
+        if not driver_index_traj:
+            st.warning("📡 Could not reach the historical data feed right now. Try again shortly.")
+        else:
+            traj_names = sorted(driver_index_traj.keys())
+            vault_traj_driver = st.selectbox("Select Driver", traj_names, index=traj_names.index("Fernando Alonso") if "Fernando Alonso" in traj_names else 0, key="vault_traj_select")
+            if st.button("📈 Plot Career Trajectory", key="vault_traj_btn"):
+                with st.spinner("Aggregating season-by-season results..."):
+                    df_traj = vault_get_driver_results(driver_index_traj[vault_traj_driver])
+                if df_traj.empty:
+                    st.info("📻 No race results found for this driver.")
+                else:
+                    season_points = df_traj.groupby("season")["points"].sum().reset_index()
+                    season_points.columns = ["Season", "Points"]
+                    st.bar_chart(season_points, x="Season", y="Points", use_container_width=True)
+
+                    best_season = season_points.loc[season_points['Points'].idxmax()]
+                    total_career_points = season_points['Points'].sum()
+                    seasons_active = season_points['Season'].nunique()
+
+                    t1, t2, t3 = st.columns(3)
+                    with t1:
+                        st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #22c55e;"><h3>🏆 Best Season</h3><h2>{int(best_season["Season"])}</h2><small>{best_season["Points"]:.0f} points</small></div>', unsafe_allow_html=True)
+                    with t2:
+                        st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #38bdf8;"><h3>🧮 Career Total</h3><h2>{total_career_points:.0f} pts</h2><small>Across {seasons_active} seasons</small></div>', unsafe_allow_html=True)
+                    with t3:
+                        avg_pts = total_career_points / seasons_active if seasons_active else 0
+                        st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #a855f7;"><h3>📊 Avg Points/Season</h3><h2>{avg_pts:.1f}</h2><small>{vault_traj_driver}</small></div>', unsafe_allow_html=True)
 
 st.caption("F1 Pit Wall Hub • Completely Free • Powered by Public APIs (Jolpi/Ergast + OpenF1) • No API Keys Required")
