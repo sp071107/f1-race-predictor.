@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
@@ -383,11 +384,19 @@ with tabs[1]:
     with wcol2:
         track_temp = st.slider("Track Temperature (°C)", 20, 60, 38)
 
-    if st.button("🔮 Generate Podium Predictions", type="primary", use_container_width=True):
-        with st.spinner("Training model + generating predictions..."):
+    st.markdown("### 🎲 Simulation Settings")
+    sim_col1, sim_col2 = st.columns(2)
+    with sim_col1:
+        n_sims = st.select_slider("Monte Carlo Iterations", options=[1000, 2500, 5000, 8000, 10000], value=5000,
+                                   help="How many times the race is simulated. More iterations = smoother probabilities, same speed since it's vectorized.")
+    with sim_col2:
+        st.caption("Each simulation samples DNF risk, safety-car disruption, and per-driver pace variance from real historical data — then ranks the field. Win/podium % below are the share of simulated races each driver actually finished there, not a single deterministic guess.")
+
+    if st.button("🔮 Run Monte Carlo Podium Simulation", type="primary", use_container_width=True):
+        with st.spinner(f"Training model + running {n_sims:,} race simulations..."):
             try:
                 @st.cache_resource
-                def train_model():
+                def train_model_and_risk_profile():
                     all_data = []
                     for year in range(2016, current_year + 1):
                         try:
@@ -401,7 +410,8 @@ with tabs[1]:
                                             'driver': res['Driver']['driverId'],
                                             'constructor': res['Constructor']['constructorId'],
                                             'grid': int(res.get('grid', 20)),
-                                            'finish': int(res.get('positionOrder', res.get('position', 20)))
+                                            'finish': int(res.get('positionOrder', res.get('position', 20))),
+                                            'status': res.get('status', '')
                                         })
                         except Exception:
                             continue
@@ -420,9 +430,24 @@ with tabs[1]:
                     X = df[['year', 'round', 'c_enc', 'd_enc', 'const_enc', 'grid']]
                     y = df['finish']
                     model.fit(X, y)
-                    return model, le_c, le_d, le_const
 
-                model, le_c, le_d, le_const = train_model()
+                    # ---- RISK PROFILE: built from the SAME free historical data, no extra API calls ----
+                    df['finished_clean'] = df['status'].str.contains("Finished", case=False, na=False) | df['status'].str.contains(r'^\+', regex=True, na=False)
+
+                    # Per-driver historical DNF rate (clipped to a sane range so one bad sample year can't dominate)
+                    dnf_rates = (1 - df.groupby('driver')['finished_clean'].mean()).clip(0.02, 0.40).to_dict()
+
+                    # Per-driver finishing-position volatility -> used as Monte Carlo pace "noise" (std dev)
+                    pos_std = df.groupby('driver')['finish'].std().fillna(2.5).clip(0.8, 4.5).to_dict()
+
+                    # Per-circuit safety-car proxy: races at this circuit with 3+ retirements historically -> SC-prone
+                    race_level = df.groupby(['year', 'round', 'circuit'])['finished_clean'].apply(lambda s: (~s).sum())
+                    race_level = race_level.reset_index(name='retirements')
+                    sc_proxy = race_level.groupby('circuit')['retirements'].apply(lambda r: (r >= 3).mean()).clip(0.05, 0.65).to_dict()
+
+                    return model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy
+
+                model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile()
 
                 team_bias = {"Mercedes": -2.3, "Ferrari": -1.8, "McLaren": -1.4, "Red Bull Racing": 0.4,
                             "Aston Martin": 1.5, "Alpine": 2.4, "Williams": 2.7, "Haas F1 Team": 2.9,
@@ -452,7 +477,9 @@ with tabs[1]:
                         grid_list.append({"driver": row['Driver'], "d_id": row.get('DriverId', row['Driver'].lower().replace(" ", "_")),
                                         "team": row['Team'], "grid": i + 1})
 
-                predictions = []
+                # ---- Build the per-driver pace anchor (same base signal as before) + risk parameters ----
+                drivers_meta = []
+                anchor_scores = []
                 for entry in grid_list[:22]:
                     try:
                         circ_enc = le_c.transform([next_race["circuit"]])[0] if next_race["circuit"] in le_c.classes_ else 0
@@ -460,53 +487,111 @@ with tabs[1]:
                         const_enc = le_const.transform([entry["team"].lower().replace(" ", "_")])[0] if any(entry["team"].lower() in c.lower() for c in le_const.classes_) else 0
 
                         base_pred = model.predict([[current_year, next_race["round"], circ_enc, d_enc, const_enc, entry["grid"]]])[0]
-
                         bias = team_bias.get(entry["team"], 2.0)
-                        adjusted = base_pred + bias * 0.7 + (entry["grid"] - 3) * 0.2 + temp_factor
-                        final_pos = max(1, min(20, int(round(adjusted * weather_factor[weather]))))
+                        anchor = (base_pred + bias * 0.7 + (entry["grid"] - 3) * 0.2 + temp_factor) * weather_factor[weather]
 
-                        predictions.append({
-                            "Grid": entry["grid"], "Driver": entry["driver"], "Team": entry["team"],
-                            "Predicted Finish": final_pos, "Positions Gained": entry["grid"] - final_pos
+                        anchor_scores.append(anchor)
+                        drivers_meta.append({
+                            "Driver": entry["driver"], "Team": entry["team"], "Grid": entry["grid"],
+                            "dnf_p": dnf_rates.get(entry["d_id"], 0.12),
+                            "sigma": pos_std.get(entry["d_id"], 2.5)
                         })
                     except Exception:
                         continue
 
-                pred_df = pd.DataFrame(predictions).sort_values("Predicted Finish").reset_index(drop=True)
+                if not drivers_meta:
+                    st.warning("Not enough live grid data to simulate this race yet.")
+                else:
+                    n_drivers = len(drivers_meta)
+                    means = np.array(anchor_scores)
+                    sigmas = np.array([d["sigma"] for d in drivers_meta])
+                    dnf_p = np.array([d["dnf_p"] for d in drivers_meta])
+                    sc_p = sc_proxy.get(next_race["circuit"], 0.20)
 
-                st.success(f"🏆 Podium Predictions for **{next_race['name']}** ({weather} conditions)")
+                    # Rain amplifies pace variance (more mistakes, more variability) — physically reasonable, free to model
+                    rain_variance_mult = {"Dry": 1.0, "Light Rain": 1.3, "Heavy Rain": 1.7, "Hot & Dry": 1.05}[weather]
 
-                podium = pred_df.head(3).copy()
-                podium_scores = [1 / (p + 1) for p in podium["Predicted Finish"]]
-                total = sum(podium_scores)
-                podium["Win Probability"] = [round((s / total) * 100, 1) for s in podium_scores]
+                    rng = np.random.default_rng(42)
 
-                cols = st.columns(3)
-                for i, (_, driver) in enumerate(podium.iterrows()):
-                    with cols[i]:
-                        pos_emoji = ["🥇", "🥈", "🥉"][i]
-                        dmeta = team_meta(driver['Team'])
-                        delay = f"{i * 0.15:.2f}s"
-                        st.markdown(f"""
-                        <div class="podium-card" style="animation-delay:{delay}; text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
-                            <h2>{pos_emoji} P{i+1}</h2>
-                            <h3>{dmeta['emoji']} {driver['Driver']}</h3>
-                            <p style="color:{dmeta['color']}; font-weight:700;">{driver['Team']}</p>
-                            <small>From P{driver['Grid']} • {driver['Win Probability']}% Win Prob.</small>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    # Base pace noise per simulated race
+                    pace_noise = rng.normal(0, 1, size=(n_sims, n_drivers)) * (sigmas[None, :] * rain_variance_mult)
 
-                st.markdown("### Full Grid Predictions")
-                pred_df_display = pred_df.rename(columns={"Predicted Finish": "Pos", "Positions Gained": "Delta"})
-                deltas = pred_df_display["Delta"].tolist()
-                render_styled_table(
-                    pred_df_display.to_dict("records"),
-                    show_wins=False,
-                    delta_col=deltas
-                )
+                    # Safety car draws per race: when it happens, it shuffles the whole field with extra noise
+                    sc_draws = rng.random(n_sims) < sc_p
+                    sc_extra = rng.normal(0, 1, size=(n_sims, n_drivers)) * 1.6
+                    pace_noise = pace_noise + sc_draws[:, None] * sc_extra
+
+                    scores = means[None, :] + pace_noise
+
+                    # DNF draws: a DNF effectively removes the driver from contention for that simulated race
+                    dnf_draws = rng.random(size=(n_sims, n_drivers)) < dnf_p[None, :]
+                    scores = np.where(dnf_draws, 999.0 + rng.random(size=(n_sims, n_drivers)), scores)
+
+                    # Rank: lower score = better finishing position
+                    order = np.argsort(scores, axis=1)
+                    finish_rank = np.argsort(order, axis=1) + 1
+
+                    win_pct = (finish_rank == 1).mean(axis=0) * 100
+                    podium_pct = (finish_rank <= 3).mean(axis=0) * 100
+                    top5_pct = (finish_rank <= 5).mean(axis=0) * 100
+                    dnf_pct = dnf_draws.mean(axis=0) * 100
+                    avg_finish = np.where(dnf_draws, np.nan, finish_rank).astype(float)
+                    avg_finish = np.nanmean(avg_finish, axis=0)
+
+                    sim_df = pd.DataFrame({
+                        "Driver": [d["Driver"] for d in drivers_meta],
+                        "Team": [d["Team"] for d in drivers_meta],
+                        "Grid": [d["Grid"] for d in drivers_meta],
+                        "Win %": win_pct.round(1),
+                        "Podium %": podium_pct.round(1),
+                        "Top 5 %": top5_pct.round(1),
+                        "DNF %": dnf_pct.round(1),
+                        "Avg Finish (when classified)": avg_finish.round(2)
+                    }).sort_values("Win %", ascending=False).reset_index(drop=True)
+
+                    st.success(f"🏆 {n_sims:,}-Race Monte Carlo Simulation — **{next_race['name']}** ({weather} conditions, Safety Car probability ≈ {sc_p*100:.0f}%)")
+
+                    podium = sim_df.head(3)
+                    cols = st.columns(3)
+                    for i, (_, driver) in enumerate(podium.iterrows()):
+                        with cols[i]:
+                            pos_emoji = ["🥇", "🥈", "🥉"][i]
+                            dmeta = team_meta(driver['Team'])
+                            delay = f"{i * 0.15:.2f}s"
+                            st.markdown(f"""
+                            <div class="podium-card" style="animation-delay:{delay}; text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
+                                <h2>{pos_emoji} P{i+1} Favorite</h2>
+                                <h3>{dmeta['emoji']} {driver['Driver']}</h3>
+                                <p style="color:{dmeta['color']}; font-weight:700;">{driver['Team']}</p>
+                                <small>From P{driver['Grid']} • {driver['Win %']}% Win • {driver['Podium %']}% Podium</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    st.markdown("### 📊 Full Probability Distribution (Win % / Podium % / Top 5 % / DNF %)")
+                    st.caption("Ranked by simulated win probability — this reflects thousands of simulated race outcomes, not one fixed guess.")
+                    st.dataframe(
+                        sim_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Win %": st.column_config.ProgressColumn("Win %", min_value=0, max_value=max(1.0, sim_df["Win %"].max()), format="%.1f%%"),
+                            "Podium %": st.column_config.ProgressColumn("Podium %", min_value=0, max_value=100, format="%.1f%%"),
+                            "Top 5 %": st.column_config.ProgressColumn("Top 5 %", min_value=0, max_value=100, format="%.1f%%"),
+                            "DNF %": st.column_config.ProgressColumn("DNF %", min_value=0, max_value=max(1.0, sim_df["DNF %"].max()), format="%.1f%%"),
+                        }
+                    )
+
+                    with st.expander("ℹ️ How this simulation works (methodology)"):
+                        st.markdown("""
+                        - **Pace anchor**: a Random Forest trained on 10 years of real F1 results (year, round, circuit, driver, constructor, grid) sets each driver's expected pace, adjusted for the current weather and track temperature.
+                        - **DNF probability**: each driver's historical retirement rate, computed from real race statuses in the same dataset (clipped between 2%–40% so it stays realistic).
+                        - **Safety car risk**: estimated per circuit as the share of past races there with 3+ retirements — a free, data-driven proxy for how chaotic a track tends to be.
+                        - **Pace variance**: each driver's historical finishing-position volatility is used as their simulated lap-time/race-day noise. Wet weather amplifies this variance across the whole field.
+                        - The race is then simulated **{0:,} times**, each time randomly drawing DNFs, a possible safety car, and pace noise per driver, then ranking the field. The percentages above are simply how often each driver landed in that position across all simulated races.
+                        """.format(n_sims))
 
             except Exception as e:
-                st.error(f"Prediction error: {str(e)}")
+                st.error(f"Simulation error: {str(e)}")
 
 # ====================== DRIVER STAT CARDS ======================
 with tabs[2]:
