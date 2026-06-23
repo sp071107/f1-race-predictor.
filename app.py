@@ -679,7 +679,7 @@ with tabs[1]:
             pit_loss_seconds = st.slider("Pit Lane Loss (s)", 15, 30, 22, key="pit_loss",
                                           help="Typical real-world time lost per stop, including pit lane speed limit. Varies by circuit; 22s is a common F1 average.")
 
-        strat_n_sims = st.select_slider("Monte Carlo Iterations", options=[1000, 2500, 5000, 8000], value=3000, key="strat_nsims")
+        strat_n_sims = st.select_slider("Monte Carlo Iterations", options=[1000, 2500, 5000, 8000], value=2500, key="strat_nsims")
 
         st.markdown("#### Compare Strategies Side-by-Side")
         chosen_strategies = st.multiselect("Strategies to simulate", ["1-Stop", "2-Stop", "3-Stop"], default=["1-Stop", "2-Stop", "3-Stop"], key="strat_choices")
