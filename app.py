@@ -322,6 +322,39 @@ def get_recent_results(year):
         pass
     return []
 
+@st.cache_data(ttl=86400)
+def get_all_drivers_index():
+    """Full historical driver roster (1950–present), not just this season's grid.
+    Free, same Ergast/Jolpi feed, cached for a day since this barely changes."""
+    try:
+        resp = requests.get("https://api.jolpi.ca/ergast/f1/drivers.json?limit=2000", timeout=8).json()
+        drivers = resp['MRData']['DriverTable']['Drivers']
+        return {f"{d.get('givenName','')} {d.get('familyName','')}".strip(): d['driverId'] for d in drivers}
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=86400)
+def get_driver_career_results(driver_id):
+    try:
+        resp = requests.get(f"https://api.jolpi.ca/ergast/f1/drivers/{driver_id}/results.json?limit=1000", timeout=8).json()
+        races = resp['MRData']['RaceTable']['Races']
+        rows = []
+        for r in races:
+            res = r['Results'][0]
+            rows.append({
+                "season": int(r['season']),
+                "round": int(r['round']),
+                "race": r['raceName'],
+                "grid": int(res.get('grid', 0)),
+                "position": res.get('positionText', 'N/A'),
+                "points": float(res.get('points', 0)),
+                "constructor": res['Constructor']['name'],
+                "status": res.get('status', '')
+            })
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
 @st.cache_resource
 def train_model_and_risk_profile(year_cutoff):
     """
@@ -847,35 +880,89 @@ with tabs[2]:
 # ====================== DRIVER COMPARISON ======================
 with tabs[3]:
     st.subheader("⚔️ Driver Comparison Tool")
-    driver_list = standings_df['Driver'].tolist() if not standings_df.empty else ["K. Antonelli", "L. Hamilton"]
-    colA, colB = st.columns(2)
-    with colA:
-        driver1 = st.selectbox("Driver 1", driver_list, index=0)
-    with colB:
-        driver2 = st.selectbox("Driver 2", driver_list, index=1 if len(driver_list) > 1 else 0)
+    st.caption("Compare any driver in F1 history — not just this season's grid. Current-grid drivers show this season's stats; everyone else shows full career stats, all from the same free historical feed used elsewhere in this app.")
 
-    if st.button("Compare Drivers", type="primary", use_container_width=True):
-        d1 = standings_df[standings_df['Driver'] == driver1].iloc[0] if not standings_df.empty else None
-        d2 = standings_df[standings_df['Driver'] == driver2].iloc[0] if not standings_df.empty else None
-        if d1 is not None and d2 is not None:
+    all_drivers_index = get_all_drivers_index()
+    current_names = set(standings_df['Driver'].tolist()) if not standings_df.empty else set()
+
+    if not all_drivers_index:
+        st.warning("📡 Could not reach the driver database right now. Try again shortly.")
+    else:
+        # Current-grid drivers float to the top of the list for convenience, full history still searchable below
+        all_names = sorted(all_drivers_index.keys())
+        ordered_names = sorted(current_names) + [n for n in all_names if n not in current_names]
+
+        colA, colB = st.columns(2)
+        with colA:
+            driver1 = st.selectbox("Driver 1", ordered_names, index=0, key="comp_d1")
+        with colB:
+            default_idx2 = 1 if len(ordered_names) > 1 else 0
+            driver2 = st.selectbox("Driver 2", ordered_names, index=default_idx2, key="comp_d2")
+
+        if st.button("Compare Drivers", type="primary", use_container_width=True):
+
+            def get_driver_snapshot(name):
+                """Season stats if they're on this year's grid, otherwise full career stats."""
+                if name in current_names:
+                    row = standings_df[standings_df['Driver'] == name].iloc[0]
+                    return {
+                        "mode": "season", "Team": row['Team'], "Points": int(row['Points']),
+                        "Wins": int(row.get('Wins', 0)), "Pos": int(row['Pos'])
+                    }
+                else:
+                    driver_id = all_drivers_index.get(name)
+                    df_career = get_driver_career_results(driver_id) if driver_id else pd.DataFrame()
+                    if df_career.empty:
+                        return {"mode": "career", "Team": "Unknown", "Points": 0, "Wins": 0, "Races": 0, "Podiums": 0}
+                    wins = int((df_career['position'] == '1').sum())
+                    podiums = int(df_career['position'].isin(['1', '2', '3']).sum())
+                    latest_team = df_career.sort_values(['season', 'round']).iloc[-1]['constructor']
+                    return {
+                        "mode": "career", "Team": latest_team, "Points": float(df_career['points'].sum()),
+                        "Wins": wins, "Races": len(df_career), "Podiums": podiums
+                    }
+
+            d1 = get_driver_snapshot(driver1)
+            d2 = get_driver_snapshot(driver2)
+
             c1, c2 = st.columns(2)
             with c1:
                 m1 = team_meta(d1['Team'])
                 st.markdown(f"#### {m1['emoji']} {driver1}")
-                st.metric("Position", f"P{d1['Pos']}", f"{d1['Points']} pts")
-                st.metric("Team", d1['Team'])
-                st.metric("Wins", int(d1.get('Wins', 0)))
+                if d1['mode'] == "season":
+                    st.metric("Championship Position", f"P{d1['Pos']}", f"{d1['Points']} pts")
+                    st.metric("Team", d1['Team'])
+                    st.metric("Wins This Season", d1['Wins'])
+                else:
+                    st.metric("Career Points", f"{d1['Points']:.0f}")
+                    st.metric("Most Recent Team", d1['Team'])
+                    st.metric("Career Wins / Podiums", f"{d1['Wins']} / {d1.get('Podiums', 0)}")
+                    st.caption(f"{d1.get('Races', 0)} career races")
             with c2:
                 m2 = team_meta(d2['Team'])
                 st.markdown(f"#### {m2['emoji']} {driver2}")
-                st.metric("Position", f"P{d2['Pos']}", f"{d2['Points']} pts")
-                st.metric("Team", d2['Team'])
-                st.metric("Wins", int(d2.get('Wins', 0)))
-            better = driver1 if d1['Points'] > d2['Points'] else (driver2 if d2['Points'] > d1['Points'] else None)
-            if better:
-                st.success(f"**{better}** is performing better this season on points.")
+                if d2['mode'] == "season":
+                    st.metric("Championship Position", f"P{d2['Pos']}", f"{d2['Points']} pts")
+                    st.metric("Team", d2['Team'])
+                    st.metric("Wins This Season", d2['Wins'])
+                else:
+                    st.metric("Career Points", f"{d2['Points']:.0f}")
+                    st.metric("Most Recent Team", d2['Team'])
+                    st.metric("Career Wins / Podiums", f"{d2['Wins']} / {d2.get('Podiums', 0)}")
+                    st.caption(f"{d2.get('Races', 0)} career races")
+
+            if d1['mode'] == d2['mode'] == "season":
+                better = driver1 if d1['Points'] > d2['Points'] else (driver2 if d2['Points'] > d1['Points'] else None)
+                if better:
+                    st.success(f"**{better}** is performing better this season on points.")
+                else:
+                    st.info("Both drivers are tied on points this season.")
+            elif d1['mode'] == d2['mode'] == "career":
+                better = driver1 if d1['Points'] > d2['Points'] else (driver2 if d2['Points'] > d1['Points'] else None)
+                if better:
+                    st.success(f"**{better}** has the stronger career points total.")
             else:
-                st.info("Both drivers are tied on points this season.")
+                st.info("Comparing a current-season driver against a career stat line — points scales differ (season vs. all-time), so treat this as informational rather than head-to-head.")
 
 # ====================== HISTORY ======================
 with tabs[4]:
@@ -1020,36 +1107,8 @@ with tabs[7]:
     st.subheader("📚 Historical Stats Vault")
     st.caption("Free forever — powered by the same Jolpi/Ergast API used elsewhere in this app, no keys required.")
 
-    @st.cache_data(ttl=86400)
-    def vault_get_driver_index():
-        try:
-            resp = requests.get("https://api.jolpi.ca/ergast/f1/drivers.json?limit=2000", timeout=8).json()
-            drivers = resp['MRData']['DriverTable']['Drivers']
-            return {f"{d.get('givenName','')} {d.get('familyName','')}".strip(): d['driverId'] for d in drivers}
-        except Exception:
-            return {}
-
-    @st.cache_data(ttl=86400)
-    def vault_get_driver_results(driver_id):
-        try:
-            resp = requests.get(f"https://api.jolpi.ca/ergast/f1/drivers/{driver_id}/results.json?limit=1000", timeout=8).json()
-            races = resp['MRData']['RaceTable']['Races']
-            rows = []
-            for r in races:
-                res = r['Results'][0]
-                rows.append({
-                    "season": int(r['season']),
-                    "round": int(r['round']),
-                    "race": r['raceName'],
-                    "grid": int(res.get('grid', 0)),
-                    "position": res.get('positionText', 'N/A'),
-                    "points": float(res.get('points', 0)),
-                    "constructor": res['Constructor']['name'],
-                    "status": res.get('status', '')
-                })
-            return pd.DataFrame(rows)
-        except Exception:
-            return pd.DataFrame()
+    vault_get_driver_index = get_all_drivers_index
+    vault_get_driver_results = get_driver_career_results
 
     @st.cache_data(ttl=86400)
     def vault_on_this_day(month, day):
