@@ -45,7 +45,13 @@ def team_meta(team_name):
 # ====================== PROFESSIONAL STYLING ======================
 st.markdown("""
 <style>
-    .stApp { background-color: #0b0d12; color: #f1f5f9; }
+    @import url('https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&family=Barlow+Condensed:wght@500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Titillium Web', 'Segoe UI', sans-serif; }
+    .stApp { background-color: #0b0d12; color: #f1f5f9; font-family: 'Titillium Web', 'Segoe UI', sans-serif; }
+    h1, h2, h3, .main-header, .card-title, .race-row .name, .driver-card h3 {
+        font-family: 'Barlow Condensed', 'Titillium Web', sans-serif; letter-spacing: 0.01em;
+    }
     .main-header {
         font-size: 3.4rem; font-weight: 900; color: #FF1801;
         text-align: center; letter-spacing: -0.03em; margin-bottom: 0;
@@ -203,6 +209,31 @@ def render_styled_table(rows, show_wins=True, delta_col=None):
             f'<span class="points" style="color:{meta["color"]};">{int(row.get("Points", 0))} {delta_html}</span>'
             f'</div>'
         )
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+def render_data_table(rows, team_col=None):
+    """
+    Generic animated table for non-driver-standings data (calendar, circuit winners,
+    tyre stints, pit stops, strategy comparisons) — reuses the same .race-row CSS
+    so every table in the app shares one consistent look instead of falling back
+    to a plain st.dataframe.
+    team_col: optional column name whose value is used to colour that row's left edge.
+    """
+    if not rows:
+        st.info("No data to display.")
+        return
+    columns = list(rows[0].keys())
+    html = ['<div class="race-table">']
+    header_cells = "".join(f'<span style="flex:1; padding-right:8px;">{c}</span>' for c in columns)
+    html.append(f'<div class="race-row header-row" style="border-left:none;">{header_cells}</div>')
+    for i, row in enumerate(rows):
+        delay = f"{min(i * 0.03, 0.5):.2f}s"
+        color = "#282e3d"
+        if team_col and row.get(team_col):
+            color = team_meta(row[team_col])["color"]
+        cells = "".join(f'<span style="flex:1; padding-right:8px;">{row.get(c, "")}</span>' for c in columns)
+        html.append(f'<div class="race-row" style="animation-delay:{delay}; border-left:4px solid {color};">{cells}</div>')
     html.append('</div>')
     st.markdown("".join(html), unsafe_allow_html=True)
 
@@ -620,7 +651,7 @@ with tabs[1]:
             st.caption(f"📈 Live rolling form (last 5 races) currently favors **{top_form.replace('_',' ').title()}** — this updates automatically after every race, no manual edits needed.")
 
     st.markdown("### 📅 Full Season Calendar")
-    st.dataframe(calendar_df, use_container_width=True, hide_index=True)
+    render_data_table(calendar_df.to_dict("records"))
 
     predict_tab, strategy_tab, backtest_tab = st.tabs(["🎯 PREDICT NEXT RACE", "📋 STRATEGY SIMULATOR", "🕰️ PREDICTION VS REALITY"])
 
@@ -774,7 +805,7 @@ with tabs[1]:
                                     row[f"{strat} Podium %"] = match['Podium %'].values[0] if not match.empty else 0.0
                                 compare_rows.append(row)
                             compare_df = pd.DataFrame(compare_rows).sort_values(f"{chosen_strategies[0]} Win %", ascending=False).reset_index(drop=True)
-                            st.dataframe(compare_df, use_container_width=True, hide_index=True)
+                            render_data_table(compare_df.to_dict("records"))
                     except Exception as e:
                         st.error(f"Strategy simulation error: {str(e)}")
 
@@ -1197,8 +1228,8 @@ with tabs[7]:
                     return {"Races": len(df), "Wins": int(wins), "Podiums": int(podiums), "Poles (P1 starts)": int(poles), "Total Points": float(points), "DNFs": int(dnfs)}
 
                 stats_a, stats_b = vault_summarize(df_a), vault_summarize(df_b)
-                compare_df = pd.DataFrame({vault_driver_a: stats_a, vault_driver_b: stats_b})
-                st.dataframe(compare_df, use_container_width=True)
+                compare_rows_h2h = [{"Metric": k, vault_driver_a: stats_a[k], vault_driver_b: stats_b[k]} for k in stats_a]
+                render_data_table(compare_rows_h2h)
 
                 m1, m2, m3 = st.columns(3)
                 with m1:
@@ -1263,7 +1294,7 @@ with tabs[7]:
                         f'<small>{top_winner_count} win(s) at this circuit</small></div>',
                         unsafe_allow_html=True
                     )
-                    st.dataframe(df_winners, hide_index=True, use_container_width=True)
+                    render_data_table(df_winners.to_dict("records"), team_col="constructor")
 
     # --- CAREER TRAJECTORY ---
     with vault_tabs[3]:
@@ -1369,7 +1400,7 @@ with tabs[8]:
                         "Stint Lap Range": f"{s.get('lap_start', '?')}–{s.get('lap_end', '?')}",
                         "Tyre Age at Start": s.get("tyre_age_at_start", "?")
                     })
-                st.dataframe(pd.DataFrame(stint_rows), use_container_width=True, hide_index=True)
+                render_data_table(stint_rows, team_col="Team")
             else:
                 st.info("📻 No tyre stint data available for this session yet.")
 
@@ -1385,7 +1416,7 @@ with tabs[8]:
                         "Lap": p.get("lap_number", "?"),
                         "Pit Duration (s)": p.get("pit_duration", "?")
                     })
-                st.dataframe(pd.DataFrame(pit_rows), use_container_width=True, hide_index=True)
+                render_data_table(pit_rows, team_col="Team")
             else:
                 st.info("📻 No pit stop data recorded for this session yet.")
 
