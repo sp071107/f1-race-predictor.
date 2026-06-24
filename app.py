@@ -254,78 +254,113 @@ st.markdown("""
 
 @st.cache_data(ttl=600)
 def get_current_standings(year):
-    try:
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/driverStandings.json"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
-            drivers = [{
-                "Pos": int(d['position']),
-                "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}",
-                "Team": d['Constructors'][0]['name'],
-                "Points": int(d['points']),
-                "Wins": int(d.get('wins', 0)),
-                "Nationality": d['Driver'].get('nationality', 'Unknown'),
-                "DriverId": d['Driver'].get('driverId', '')
-            } for d in data]
-            return pd.DataFrame(drivers)
-    except Exception:
-        pass
-    return pd.DataFrame([
-        {"Pos": 1, "Driver": "K. Antonelli", "Team": "Mercedes", "Points": 156, "Wins": 3, "Nationality": "Italian", "DriverId": "antonelli"},
-        {"Pos": 2, "Driver": "L. Hamilton", "Team": "Ferrari", "Points": 90, "Wins": 1, "Nationality": "British", "DriverId": "hamilton"},
-        {"Pos": 3, "Driver": "G. Russell", "Team": "Mercedes", "Points": 88, "Wins": 1, "Nationality": "British", "DriverId": "russell"},
-    ])
+    """Tries the current season; if that's not loaded yet on the free API, falls back to
+    last season's FINAL standings (real data, clearly flagged) rather than fabricated numbers.
+    Returns an empty DataFrame only if both real attempts fail — never invented placeholder rows."""
+    for y in [year, year - 1]:
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{y}/driverStandings.json"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                lists = resp.json()['MRData']['StandingsTable']['StandingsLists']
+                if lists:
+                    data = lists[0]['DriverStandings']
+                    drivers = [{
+                        "Pos": int(d['position']),
+                        "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}",
+                        "Team": d['Constructors'][0]['name'],
+                        "Points": int(d['points']),
+                        "Wins": int(d.get('wins', 0)),
+                        "Nationality": d['Driver'].get('nationality', 'Unknown'),
+                        "DriverId": d['Driver'].get('driverId', '')
+                    } for d in data]
+                    df = pd.DataFrame(drivers)
+                    df.attrs['source_year'] = y
+                    df.attrs['is_current'] = (y == year)
+                    return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 @st.cache_data(ttl=600)
 def get_constructor_standings(year):
-    try:
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/constructorStandings.json"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['ConstructorStandings']
-            cons = [{
-                "Pos": int(c['position']),
-                "Team": c['Constructor']['name'],
-                "Points": int(c['points']),
-                "Wins": int(c.get('wins', 0))
-            } for c in data]
-            return pd.DataFrame(cons)
-    except Exception:
-        pass
-    return pd.DataFrame([{"Pos": 1, "Team": "Mercedes", "Points": 244, "Wins": 4}])
+    for y in [year, year - 1]:
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{y}/constructorStandings.json"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                lists = resp.json()['MRData']['StandingsTable']['StandingsLists']
+                if lists:
+                    data = lists[0]['ConstructorStandings']
+                    cons = [{
+                        "Pos": int(c['position']),
+                        "Team": c['Constructor']['name'],
+                        "Points": int(c['points']),
+                        "Wins": int(c.get('wins', 0))
+                    } for c in data]
+                    df = pd.DataFrame(cons)
+                    df.attrs['source_year'] = y
+                    df.attrs['is_current'] = (y == year)
+                    return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_next_race(year):
+    """Tries the current season's calendar first. If the free API hasn't loaded this
+    season yet (common for a brand-new year), falls back to the real final race of last
+    season instead of a fabricated placeholder. Returns None only if everything fails,
+    so the UI can show an honest 'unavailable' message instead of fake-looking data."""
     try:
         url = f"https://api.jolpi.ca/ergast/f1/{year}.json"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             races = resp.json()['MRData']['RaceTable']['Races']
-            today = datetime.utcnow().date().isoformat()
-            for race in races:
-                if race.get('date', '') >= today:
-                    return {
-                        "name": race['raceName'],
-                        "round": race['round'],
-                        "date": race['date'],
-                        "circuit": race['Circuit']['circuitId'],
-                        "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
-                        "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}"
-                    }
-            # season finished — return the last race as reference
+            if races:
+                today = datetime.utcnow().date().isoformat()
+                for race in races:
+                    if race.get('date', '') >= today:
+                        return {
+                            "name": race['raceName'], "round": race['round'], "date": race['date'],
+                            "circuit": race['Circuit']['circuitId'],
+                            "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
+                            "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                            "is_current": True, "season_complete": False
+                        }
+                # every race this year has already happened — season's over, show the real final race
+                race = races[-1]
+                return {
+                    "name": race['raceName'], "round": race['round'], "date": race['date'],
+                    "circuit": race['Circuit']['circuitId'],
+                    "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
+                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                    "is_current": True, "season_complete": True
+                }
+    except Exception:
+        pass
+
+    # Current season calendar isn't available yet on the free API — fall back to last
+    # season's real final race rather than a fabricated race name.
+    try:
+        url = f"https://api.jolpi.ca/ergast/f1/{year - 1}.json"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            races = resp.json()['MRData']['RaceTable']['Races']
             if races:
                 race = races[-1]
                 return {
                     "name": race['raceName'], "round": race['round'], "date": race['date'],
                     "circuit": race['Circuit']['circuitId'],
                     "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
-                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}"
+                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                    "is_current": False, "season_complete": True
                 }
     except Exception:
         pass
-    return {"name": "Spanish Grand Prix", "round": "TBD", "date": "Soon",
-            "circuit": "catalunya", "circuit_name": "Barcelona", "location": "Barcelona, Spain"}
+
+    return None
+
 
 @st.cache_data(ttl=3600)
 def get_full_calendar(year):
@@ -598,6 +633,10 @@ current_year = datetime.utcnow().year
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 next_race = get_next_race(current_year)
+if next_race is None:
+    next_race = {"name": "Race calendar temporarily unavailable", "round": "—", "date": "—",
+                 "circuit": "unknown", "circuit_name": "Unavailable", "location": "—",
+                 "is_current": False, "season_complete": None}
 
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "📡 LIVE SESSION"])
 
@@ -614,9 +653,18 @@ with tabs[0]:
             <p><strong>Circuit:</strong> {next_race['circuit_name']} ({next_race['location']})</p>
         </div>
         """, unsafe_allow_html=True)
+        if next_race.get("is_current") is False:
+            st.caption("⚠️ Current-season calendar isn't loaded on the free data feed yet — showing the most recent confirmed race instead.")
+        elif next_race.get("season_complete"):
+            st.caption("🏁 The current season has concluded — showing the final race of the season.")
     with col2:
         leader_name = standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A"
         st.metric("🏆 Championship Leader", leader_name)
+
+    if standings_df.empty:
+        st.warning("📡 Live standings are temporarily unavailable from the free data feed. Try refreshing in a few minutes.")
+    elif standings_df.attrs.get('is_current') is False:
+        st.caption(f"⚠️ Showing final standings from {standings_df.attrs.get('source_year', 'last season')} — current-season data isn't loaded on the free feed yet.")
 
     st.markdown("### 📊 Season Snapshot")
     m1, m2, m3, m4 = st.columns(4)
