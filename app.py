@@ -45,7 +45,13 @@ def team_meta(team_name):
 # ====================== PROFESSIONAL STYLING ======================
 st.markdown("""
 <style>
-    .stApp { background-color: #0b0d12; color: #f1f5f9; }
+    @import url('https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&family=Barlow+Condensed:wght@500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Titillium Web', 'Segoe UI', sans-serif; }
+    .stApp { background-color: #0b0d12; color: #f1f5f9; font-family: 'Titillium Web', 'Segoe UI', sans-serif; }
+    h1, h2, h3, .main-header, .card-title, .race-row .name, .driver-card h3 {
+        font-family: 'Barlow Condensed', 'Titillium Web', sans-serif; letter-spacing: 0.01em;
+    }
     .main-header {
         font-size: 3.4rem; font-weight: 900; color: #FF1801;
         text-align: center; letter-spacing: -0.03em; margin-bottom: 0;
@@ -206,6 +212,31 @@ def render_styled_table(rows, show_wins=True, delta_col=None):
     html.append('</div>')
     st.markdown("".join(html), unsafe_allow_html=True)
 
+def render_data_table(rows, team_col=None):
+    """
+    Generic animated table for non-driver-standings data (calendar, circuit winners,
+    tyre stints, pit stops, strategy comparisons) — reuses the same .race-row CSS
+    so every table in the app shares one consistent look instead of falling back
+    to a plain st.dataframe.
+    team_col: optional column name whose value is used to colour that row's left edge.
+    """
+    if not rows:
+        st.info("No data to display.")
+        return
+    columns = list(rows[0].keys())
+    html = ['<div class="race-table">']
+    header_cells = "".join(f'<span style="flex:1; padding-right:8px;">{c}</span>' for c in columns)
+    html.append(f'<div class="race-row header-row" style="border-left:none;">{header_cells}</div>')
+    for i, row in enumerate(rows):
+        delay = f"{min(i * 0.03, 0.5):.2f}s"
+        color = "#282e3d"
+        if team_col and row.get(team_col):
+            color = team_meta(row[team_col])["color"]
+        cells = "".join(f'<span style="flex:1; padding-right:8px;">{row.get(c, "")}</span>' for c in columns)
+        html.append(f'<div class="race-row" style="animation-delay:{delay}; border-left:4px solid {color};">{cells}</div>')
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
+
 # ====================== HERO HEADER ======================
 st.markdown("""
 <div class="hero-banner">
@@ -223,78 +254,113 @@ st.markdown("""
 
 @st.cache_data(ttl=600)
 def get_current_standings(year):
-    try:
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/driverStandings.json"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
-            drivers = [{
-                "Pos": int(d['position']),
-                "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}",
-                "Team": d['Constructors'][0]['name'],
-                "Points": int(d['points']),
-                "Wins": int(d.get('wins', 0)),
-                "Nationality": d['Driver'].get('nationality', 'Unknown'),
-                "DriverId": d['Driver'].get('driverId', '')
-            } for d in data]
-            return pd.DataFrame(drivers)
-    except Exception:
-        pass
-    return pd.DataFrame([
-        {"Pos": 1, "Driver": "K. Antonelli", "Team": "Mercedes", "Points": 156, "Wins": 3, "Nationality": "Italian", "DriverId": "antonelli"},
-        {"Pos": 2, "Driver": "L. Hamilton", "Team": "Ferrari", "Points": 90, "Wins": 1, "Nationality": "British", "DriverId": "hamilton"},
-        {"Pos": 3, "Driver": "G. Russell", "Team": "Mercedes", "Points": 88, "Wins": 1, "Nationality": "British", "DriverId": "russell"},
-    ])
+    """Tries the current season; if that's not loaded yet on the free API, falls back to
+    last season's FINAL standings (real data, clearly flagged) rather than fabricated numbers.
+    Returns an empty DataFrame only if both real attempts fail — never invented placeholder rows."""
+    for y in [year, year - 1]:
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{y}/driverStandings.json"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                lists = resp.json()['MRData']['StandingsTable']['StandingsLists']
+                if lists:
+                    data = lists[0]['DriverStandings']
+                    drivers = [{
+                        "Pos": int(d['position']),
+                        "Driver": f"{d['Driver']['givenName']} {d['Driver']['familyName']}",
+                        "Team": d['Constructors'][0]['name'],
+                        "Points": int(d['points']),
+                        "Wins": int(d.get('wins', 0)),
+                        "Nationality": d['Driver'].get('nationality', 'Unknown'),
+                        "DriverId": d['Driver'].get('driverId', '')
+                    } for d in data]
+                    df = pd.DataFrame(drivers)
+                    df.attrs['source_year'] = y
+                    df.attrs['is_current'] = (y == year)
+                    return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 @st.cache_data(ttl=600)
 def get_constructor_standings(year):
-    try:
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/constructorStandings.json"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()['MRData']['StandingsTable']['StandingsLists'][0]['ConstructorStandings']
-            cons = [{
-                "Pos": int(c['position']),
-                "Team": c['Constructor']['name'],
-                "Points": int(c['points']),
-                "Wins": int(c.get('wins', 0))
-            } for c in data]
-            return pd.DataFrame(cons)
-    except Exception:
-        pass
-    return pd.DataFrame([{"Pos": 1, "Team": "Mercedes", "Points": 244, "Wins": 4}])
+    for y in [year, year - 1]:
+        try:
+            url = f"https://api.jolpi.ca/ergast/f1/{y}/constructorStandings.json"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 200:
+                lists = resp.json()['MRData']['StandingsTable']['StandingsLists']
+                if lists:
+                    data = lists[0]['ConstructorStandings']
+                    cons = [{
+                        "Pos": int(c['position']),
+                        "Team": c['Constructor']['name'],
+                        "Points": int(c['points']),
+                        "Wins": int(c.get('wins', 0))
+                    } for c in data]
+                    df = pd.DataFrame(cons)
+                    df.attrs['source_year'] = y
+                    df.attrs['is_current'] = (y == year)
+                    return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_next_race(year):
+    """Tries the current season's calendar first. If the free API hasn't loaded this
+    season yet (common for a brand-new year), falls back to the real final race of last
+    season instead of a fabricated placeholder. Returns None only if everything fails,
+    so the UI can show an honest 'unavailable' message instead of fake-looking data."""
     try:
         url = f"https://api.jolpi.ca/ergast/f1/{year}.json"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             races = resp.json()['MRData']['RaceTable']['Races']
-            today = datetime.utcnow().date().isoformat()
-            for race in races:
-                if race.get('date', '') >= today:
-                    return {
-                        "name": race['raceName'],
-                        "round": race['round'],
-                        "date": race['date'],
-                        "circuit": race['Circuit']['circuitId'],
-                        "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
-                        "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}"
-                    }
-            # season finished — return the last race as reference
+            if races:
+                today = datetime.utcnow().date().isoformat()
+                for race in races:
+                    if race.get('date', '') >= today:
+                        return {
+                            "name": race['raceName'], "round": race['round'], "date": race['date'],
+                            "circuit": race['Circuit']['circuitId'],
+                            "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
+                            "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                            "is_current": True, "season_complete": False
+                        }
+                # every race this year has already happened — season's over, show the real final race
+                race = races[-1]
+                return {
+                    "name": race['raceName'], "round": race['round'], "date": race['date'],
+                    "circuit": race['Circuit']['circuitId'],
+                    "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
+                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                    "is_current": True, "season_complete": True
+                }
+    except Exception:
+        pass
+
+    # Current season calendar isn't available yet on the free API — fall back to last
+    # season's real final race rather than a fabricated race name.
+    try:
+        url = f"https://api.jolpi.ca/ergast/f1/{year - 1}.json"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            races = resp.json()['MRData']['RaceTable']['Races']
             if races:
                 race = races[-1]
                 return {
                     "name": race['raceName'], "round": race['round'], "date": race['date'],
                     "circuit": race['Circuit']['circuitId'],
                     "circuit_name": race['Circuit']['circuitId'].replace('_', ' ').title(),
-                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}"
+                    "location": f"{race['Circuit']['Location']['locality']}, {race['Circuit']['Location']['country']}",
+                    "is_current": False, "season_complete": True
                 }
     except Exception:
         pass
-    return {"name": "Spanish Grand Prix", "round": "TBD", "date": "Soon",
-            "circuit": "catalunya", "circuit_name": "Barcelona", "location": "Barcelona, Spain"}
+
+    return None
+
 
 @st.cache_data(ttl=3600)
 def get_full_calendar(year):
@@ -310,6 +376,22 @@ def get_full_calendar(year):
     except Exception:
         pass
     return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def get_remaining_rounds(year, from_round):
+    """Real circuit IDs for every round from `from_round` to season end — needed by the
+    Season Simulator so each remaining race uses its actual circuit, not a guess."""
+    try:
+        url = f"https://api.jolpi.ca/ergast/f1/{year}.json"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            races = resp.json()['MRData']['RaceTable']['Races']
+            return [{
+                "round": int(r['round']), "circuit_id": r['Circuit']['circuitId'], "race_name": r['raceName']
+            } for r in races if int(r['round']) >= from_round]
+    except Exception:
+        pass
+    return []
 
 @st.cache_data(ttl=600)
 def get_recent_results(year):
@@ -512,6 +594,105 @@ def run_monte_carlo(drivers_meta, anchor_scores, sc_p, weather, n_sims, seed=42)
     return sim_df
 
 
+# ====================== TYRE DEGRADATION MODEL (pure compute — zero API cost, zero new dependency) ======================
+# Compound parameters are illustrative, physically-reasonable approximations (not telemetry-derived),
+# calibrated to match the commonly understood behavior: Soft = fastest but degrades quickest and hits
+# a "cliff" earliest; Hard = slowest out the box but most durable. This is disclosed in the UI.
+TYRE_COMPOUNDS = {
+    "Soft":   {"base_rate": 0.085, "cliff_lap": 14, "cliff_severity": 0.22, "color": "#ff4d4d"},
+    "Medium": {"base_rate": 0.052, "cliff_lap": 24, "cliff_severity": 0.16, "color": "#f5d142"},
+    "Hard":   {"base_rate": 0.030, "cliff_lap": 36, "cliff_severity": 0.10, "color": "#e8e8e8"},
+}
+
+def tyre_degradation_curve(compound, stint_laps, track_temp):
+    """Returns an array of per-lap cumulative time-loss (seconds) vs. a fresh tyre, for one stint.
+    Hotter track temps accelerate wear (roughly +1.8% degradation per °C above 35°C, a reasonable
+    real-world rule of thumb, not an exact telemetry constant)."""
+    params = TYRE_COMPOUNDS[compound]
+    temp_mult = 1.0 + max(0, (track_temp - 35)) * 0.018
+    laps = np.arange(1, stint_laps + 1)
+    linear_loss = params["base_rate"] * temp_mult * laps
+    cliff_loss = params["cliff_severity"] * temp_mult * np.maximum(0, laps - params["cliff_lap"]) ** 1.4
+    return linear_loss + cliff_loss
+
+def estimate_strategy_time_loss(n_stops, total_laps, track_temp, pit_loss_seconds):
+    """Splits the race into (n_stops + 1) stints, assigns a sensible compound rotation
+    (softer early, harder late — the common real-world pattern), and sums degradation
+    time-loss across all stints plus the pit lane time cost of each stop.
+    Returns (total_time_loss_seconds, per_stint_breakdown)."""
+    n_stints = n_stops + 1
+    rotation_by_stints = {
+        1: ["Hard"],
+        2: ["Medium", "Hard"],
+        3: ["Soft", "Medium", "Hard"],
+        4: ["Soft", "Soft", "Medium", "Hard"],
+    }
+    compounds = rotation_by_stints.get(n_stints, ["Medium"] * n_stints)
+    base_stint_len = total_laps // n_stints
+    remainder = total_laps - base_stint_len * n_stints
+    stint_lengths = [base_stint_len + (1 if i < remainder else 0) for i in range(n_stints)]
+
+    total_loss = 0.0
+    breakdown = []
+    for compound, stint_len in zip(compounds, stint_lengths):
+        if stint_len <= 0:
+            continue
+        curve = tyre_degradation_curve(compound, stint_len, track_temp)
+        stint_loss = float(curve[-1])  # cumulative loss by end of stint
+        total_loss += stint_loss
+        breakdown.append({"Compound": compound, "Laps": stint_len, "Time Lost (s)": round(stint_loss, 1)})
+
+    total_loss += n_stops * pit_loss_seconds
+    return total_loss, breakdown
+
+
+# ====================== SEASON-LONG CHAMPIONSHIP SIMULATOR (reuses the same engine, chained across rounds) ======================
+F1_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]  # standard race points, P1-P10. Sprint points not modeled — disclosed in UI.
+
+def simulate_remaining_season(per_round_meta, current_points, n_sims=3000, seed=7):
+    """
+    per_round_meta: list of (drivers_meta, anchor_scores, sc_p) — one tuple per remaining round,
+    all sharing the same driver ordering (so index i = same driver in every round).
+    current_points: array aligned to that same driver ordering — each driver's real points so far.
+    Runs the whole rest of the season n_sims times, awarding real F1 points each simulated race,
+    then reports each driver's championship-win % and average projected final points.
+    """
+    n_drivers = len(per_round_meta[0][0])
+    rng = np.random.default_rng(seed)
+    total_points = np.zeros((n_sims, n_drivers))
+
+    rank_to_pts = np.zeros(n_drivers + 1)
+    for pos_idx, pts in enumerate(F1_POINTS_TABLE):
+        if pos_idx + 1 <= n_drivers:
+            rank_to_pts[pos_idx + 1] = pts
+
+    for drivers_meta, anchor_scores, sc_p in per_round_meta:
+        means = np.array(anchor_scores)
+        sigmas = np.array([d["sigma"] for d in drivers_meta])
+        dnf_p = np.array([d["dnf_p"] for d in drivers_meta])
+
+        pace_noise = rng.normal(0, 1, size=(n_sims, n_drivers)) * sigmas[None, :]
+        sc_draws = rng.random(n_sims) < sc_p
+        sc_extra = rng.normal(0, 1, size=(n_sims, n_drivers)) * 1.6
+        pace_noise = pace_noise + sc_draws[:, None] * sc_extra
+
+        scores = means[None, :] + pace_noise
+        dnf_draws = rng.random(size=(n_sims, n_drivers)) < dnf_p[None, :]
+        scores = np.where(dnf_draws, 999.0 + rng.random(size=(n_sims, n_drivers)), scores)
+
+        order = np.argsort(scores, axis=1)
+        finish_rank = np.argsort(order, axis=1) + 1
+        race_points = rank_to_pts[finish_rank]
+        total_points += race_points
+
+    final_points = total_points + current_points[None, :]
+    champion_idx = np.argmax(final_points, axis=1)
+    win_counts = np.bincount(champion_idx, minlength=n_drivers)
+    champ_pct = win_counts / n_sims * 100
+    avg_final_points = final_points.mean(axis=0)
+    return champ_pct, avg_final_points
+
+
 @st.cache_data(ttl=1800)
 def get_rolling_form(year, n_races=5):
     """
@@ -567,6 +748,10 @@ current_year = datetime.utcnow().year
 standings_df = get_current_standings(current_year)
 cons_df = get_constructor_standings(current_year)
 next_race = get_next_race(current_year)
+if next_race is None:
+    next_race = {"name": "Race calendar temporarily unavailable", "round": "—", "date": "—",
+                 "circuit": "unknown", "circuit_name": "Unavailable", "location": "—",
+                 "is_current": False, "season_complete": None}
 
 tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "📡 LIVE SESSION"])
 
@@ -583,9 +768,18 @@ with tabs[0]:
             <p><strong>Circuit:</strong> {next_race['circuit_name']} ({next_race['location']})</p>
         </div>
         """, unsafe_allow_html=True)
+        if next_race.get("is_current") is False:
+            st.caption("⚠️ Current-season calendar isn't loaded on the free data feed yet — showing the most recent confirmed race instead.")
+        elif next_race.get("season_complete"):
+            st.caption("🏁 The current season has concluded — showing the final race of the season.")
     with col2:
         leader_name = standings_df.iloc[0]['Driver'] if not standings_df.empty else "N/A"
         st.metric("🏆 Championship Leader", leader_name)
+
+    if standings_df.empty:
+        st.warning("📡 Live standings are temporarily unavailable from the free data feed. Try refreshing in a few minutes.")
+    elif standings_df.attrs.get('is_current') is False:
+        st.caption(f"⚠️ Showing final standings from {standings_df.attrs.get('source_year', 'last season')} — current-season data isn't loaded on the free feed yet.")
 
     st.markdown("### 📊 Season Snapshot")
     m1, m2, m3, m4 = st.columns(4)
@@ -620,9 +814,9 @@ with tabs[1]:
             st.caption(f"📈 Live rolling form (last 5 races) currently favors **{top_form.replace('_',' ').title()}** — this updates automatically after every race, no manual edits needed.")
 
     st.markdown("### 📅 Full Season Calendar")
-    st.dataframe(calendar_df, use_container_width=True, hide_index=True)
+    render_data_table(calendar_df.to_dict("records"))
 
-    predict_tab, strategy_tab, backtest_tab = st.tabs(["🎯 PREDICT NEXT RACE", "📋 STRATEGY SIMULATOR", "🕰️ PREDICTION VS REALITY"])
+    predict_tab, strategy_tab, season_tab, backtest_tab = st.tabs(["🎯 PREDICT NEXT RACE", "📋 STRATEGY SIMULATOR", "🏆 SEASON SIMULATOR", "🕰️ PREDICTION VS REALITY"])
 
     # ============== SUB-TAB 1: PREDICT NEXT RACE ==============
     with predict_tab:
@@ -703,7 +897,7 @@ with tabs[1]:
     with strategy_tab:
         st.caption("See how the win/podium probability distribution shifts if a driver runs a non-optimal number of pit stops. This uses an approximate, transparently-modeled time-to-position conversion — it's a simplification, not telemetry-grade physics, but it's free and directionally honest.")
 
-        strat_col1, strat_col2, strat_col3 = st.columns(3)
+        strat_col1, strat_col2, strat_col3, strat_col4 = st.columns(4)
         with strat_col1:
             strat_weather = st.selectbox("Track Conditions", ["Dry", "Light Rain", "Heavy Rain", "Hot & Dry"], index=0, key="strat_weather")
         with strat_col2:
@@ -711,6 +905,19 @@ with tabs[1]:
         with strat_col3:
             pit_loss_seconds = st.slider("Pit Lane Loss (s)", 15, 30, 22, key="pit_loss",
                                           help="Typical real-world time lost per stop, including pit lane speed limit. Varies by circuit; 22s is a common F1 average.")
+        with strat_col4:
+            total_laps = st.slider("Total Race Laps", 40, 78, 58, key="total_laps", help="Most F1 races run 50-70 laps depending on circuit length.")
+
+        st.markdown("##### 🛞 Tyre Degradation Curves at This Track Temperature")
+        st.caption("Pure physics-style modeling, not telemetry-derived — illustrative wear curves showing why Softs fade fastest and Hards last longest. Feeds directly into the strategy comparison below.")
+        deg_chart_rows = []
+        max_preview_laps = 40
+        for compound in ["Soft", "Medium", "Hard"]:
+            curve = tyre_degradation_curve(compound, max_preview_laps, strat_temp)
+            for lap, loss in enumerate(curve, start=1):
+                deg_chart_rows.append({"Lap": lap, "Compound": compound, "Cumulative Time Lost (s)": round(float(loss), 2)})
+        deg_df = pd.DataFrame(deg_chart_rows).pivot(index="Lap", columns="Compound", values="Cumulative Time Lost (s)")
+        st.line_chart(deg_df, use_container_width=True, color=["#ff4d4d", "#f5d142", "#e8e8e8"])
 
         strat_n_sims = st.select_slider("Monte Carlo Iterations", options=[1000, 2500, 5000, 8000], value=2500, key="strat_nsims")
 
@@ -727,16 +934,24 @@ with tabs[1]:
                         grid_list = fetch_grid_for_round(current_year, next_race['round'], standings_df)
                         sc_p = sc_proxy.get(next_race["circuit"], 0.20)
 
-                        # Reference: 2-stop treated as the "optimal" baseline (typical for most circuits).
-                        # Extra/fewer stops apply a position-equivalent time penalty derived from pit_loss_seconds.
-                        # ~25s of pure time loss is treated as roughly equivalent to 1 grid position of pace at most circuits — an approximation, clearly disclosed.
+                        # Time-loss for each strategy now comes from the tyre degradation model above
+                        # (real compound wear curves + pit loss), not a flat stop-count guess.
+                        # ~25s of pure time loss is treated as roughly equivalent to 1 grid position of pace
+                        # at most circuits — an approximation, clearly disclosed.
                         stop_count = {"1-Stop": 1, "2-Stop": 2, "3-Stop": 3}
-                        baseline_stops = 2
+                        time_loss_by_strategy = {}
+                        breakdown_by_strategy = {}
+                        for strat, n_stops in stop_count.items():
+                            loss, breakdown = estimate_strategy_time_loss(n_stops, total_laps, strat_temp, pit_loss_seconds)
+                            time_loss_by_strategy[strat] = loss
+                            breakdown_by_strategy[strat] = breakdown
+
+                        baseline_loss = min(time_loss_by_strategy.values())  # the fastest strategy becomes the zero-penalty reference
                         strategy_results = {}
 
                         for strat in chosen_strategies:
                             n_stops = stop_count[strat]
-                            extra_penalty = (n_stops - baseline_stops) * (pit_loss_seconds / 25.0)
+                            extra_penalty = (time_loss_by_strategy[strat] - baseline_loss) / 25.0
                             drivers_meta, anchor_scores = build_drivers_meta(
                                 grid_list, current_year, next_race['round'], next_race["circuit"], strat_weather, strat_temp,
                                 model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias,
@@ -749,6 +964,11 @@ with tabs[1]:
                             st.warning("Not enough live grid data to simulate this race yet.")
                         else:
                             st.success(f"📋 Strategy comparison for **{next_race['name']}** — {len(chosen_strategies)} strategies, {strat_n_sims:,} simulations each")
+
+                            st.markdown("##### ⏱️ Estimated Total Time Lost to Tyre Wear + Pit Stops")
+                            st.caption("This isolated calculation often favors fewer stops in clean air — it doesn't capture the tactical upside of fresher tyres (overtaking, undercutting, reacting to a safety car). Those tactical effects come from the win/podium % below, via the Monte Carlo engine's grid-position and safety-car modeling, not from this time-loss number alone.")
+                            time_loss_rows = [{"Strategy": s, "Total Time Lost (s)": round(time_loss_by_strategy[s], 1), "Pit Stops": stop_count[s]} for s in chosen_strategies]
+                            render_data_table(sorted(time_loss_rows, key=lambda r: r["Total Time Lost (s)"]))
 
                             strat_cols = st.columns(len(strategy_results))
                             for col, (strat, df_s) in zip(strat_cols, strategy_results.items()):
@@ -774,9 +994,91 @@ with tabs[1]:
                                     row[f"{strat} Podium %"] = match['Podium %'].values[0] if not match.empty else 0.0
                                 compare_rows.append(row)
                             compare_df = pd.DataFrame(compare_rows).sort_values(f"{chosen_strategies[0]} Win %", ascending=False).reset_index(drop=True)
-                            st.dataframe(compare_df, use_container_width=True, hide_index=True)
+                            render_data_table(compare_df.to_dict("records"))
                     except Exception as e:
                         st.error(f"Strategy simulation error: {str(e)}")
+
+    # ============== SUB-TAB 3: SEASON SIMULATOR ==============
+    with season_tab:
+        st.caption("Runs the rest of the season forward thousands of times using the same Monte Carlo engine as the race predictor, awarding real F1 points per simulated race, to estimate each driver's title chances. Sprint races and bonus points (fastest lap, etc.) aren't modeled — disclosed honestly. Since future qualifying doesn't exist yet, this uses each driver's current championship position as a stand-in starting grid for every remaining round — a necessary simplification.")
+
+        season_n_sims = st.select_slider("Season Simulations", options=[500, 1000, 2000, 3000, 5000], value=2000, key="season_nsims",
+                                          help="Each one replays every remaining race of the season once. Higher = smoother title-odds estimates, a bit slower.")
+
+        if st.button("🏆 Simulate Rest of Season", type="primary", use_container_width=True, key="season_btn"):
+            with st.spinner("Projecting the remainder of the season..."):
+                try:
+                    if standings_df.empty:
+                        st.warning("Current standings are unavailable, so the season can't be projected right now.")
+                    else:
+                        remaining_rounds = get_remaining_rounds(current_year, int(next_race['round']) if str(next_race['round']).isdigit() else 1)
+                        if not remaining_rounds:
+                            st.info("📻 No remaining rounds found — the season may already be complete, or calendar data isn't loaded yet.")
+                        else:
+                            model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
+
+                            # Fixed driver lineup for the whole projection = current standings order.
+                            # Future qualifying doesn't exist yet, so championship position is used as
+                            # a stand-in grid — a necessary simplification, disclosed above.
+                            season_grid_list = []
+                            for i, row in standings_df.iterrows():
+                                season_grid_list.append({
+                                    "driver": row['Driver'],
+                                    "d_id": row.get('DriverId', row['Driver'].lower().replace(" ", "_")),
+                                    "team": row['Team'],
+                                    "c_id": row['Team'].lower().replace(" ", "_"),
+                                    "grid": int(row['Pos'])
+                                })
+
+                            per_round_meta = []
+                            for rnd in remaining_rounds[:24]:  # season-length safety cap
+                                drivers_meta, anchor_scores = build_drivers_meta(
+                                    season_grid_list, current_year, rnd["round"], rnd["circuit_id"], "Dry", 38,
+                                    model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                                )
+                                if drivers_meta:
+                                    sc_p = sc_proxy.get(rnd["circuit_id"], 0.20)
+                                    per_round_meta.append((drivers_meta, anchor_scores, sc_p))
+
+                            if not per_round_meta:
+                                st.warning("Not enough data to project the remaining rounds.")
+                            else:
+                                current_points = standings_df.sort_values('Pos')['Points'].to_numpy(dtype=float)
+                                champ_pct, avg_final_points = simulate_remaining_season(per_round_meta, current_points, n_sims=season_n_sims)
+
+                                season_df = pd.DataFrame({
+                                    "Driver": [d["Driver"] for d in per_round_meta[0][0]],
+                                    "Team": [d["Team"] for d in per_round_meta[0][0]],
+                                    "Current Points": current_points.round(0),
+                                    "Title %": champ_pct.round(1),
+                                    "Projected Final Points": avg_final_points.round(0)
+                                }).sort_values("Title %", ascending=False).reset_index(drop=True)
+
+                                st.success(f"🏆 {season_n_sims:,} simulated seasons across {len(per_round_meta)} remaining round(s)")
+
+                                top3 = season_df.head(3)
+                                cols = st.columns(3)
+                                for i, (_, d) in enumerate(top3.iterrows()):
+                                    with cols[i]:
+                                        dmeta = team_meta(d['Team'])
+                                        st.markdown(f"""
+                                        <div class="podium-card" style="text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
+                                            <h3>{dmeta['emoji']} {d['Driver']}</h3>
+                                            <p style="color:{dmeta['color']}; font-weight:700;">{d['Team']}</p>
+                                            <h2>{d['Title %']}% Title Odds</h2>
+                                            <small>Projected final: {int(d['Projected Final Points'])} pts</small>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+
+                                st.markdown("#### Full Championship Odds")
+                                st.dataframe(
+                                    season_df, use_container_width=True, hide_index=True,
+                                    column_config={
+                                        "Title %": st.column_config.ProgressColumn("Title %", min_value=0, max_value=max(1.0, season_df["Title %"].max()), format="%.1f%%"),
+                                    }
+                                )
+                except Exception as e:
+                    st.error(f"Season simulation error: {str(e)}")
 
     # ============== SUB-TAB 3: PREDICTION VS REALITY ==============
     with backtest_tab:
@@ -1197,8 +1499,8 @@ with tabs[7]:
                     return {"Races": len(df), "Wins": int(wins), "Podiums": int(podiums), "Poles (P1 starts)": int(poles), "Total Points": float(points), "DNFs": int(dnfs)}
 
                 stats_a, stats_b = vault_summarize(df_a), vault_summarize(df_b)
-                compare_df = pd.DataFrame({vault_driver_a: stats_a, vault_driver_b: stats_b})
-                st.dataframe(compare_df, use_container_width=True)
+                compare_rows_h2h = [{"Metric": k, vault_driver_a: stats_a[k], vault_driver_b: stats_b[k]} for k in stats_a]
+                render_data_table(compare_rows_h2h)
 
                 m1, m2, m3 = st.columns(3)
                 with m1:
@@ -1263,7 +1565,7 @@ with tabs[7]:
                         f'<small>{top_winner_count} win(s) at this circuit</small></div>',
                         unsafe_allow_html=True
                     )
-                    st.dataframe(df_winners, hide_index=True, use_container_width=True)
+                    render_data_table(df_winners.to_dict("records"), team_col="constructor")
 
     # --- CAREER TRAJECTORY ---
     with vault_tabs[3]:
@@ -1369,7 +1671,7 @@ with tabs[8]:
                         "Stint Lap Range": f"{s.get('lap_start', '?')}–{s.get('lap_end', '?')}",
                         "Tyre Age at Start": s.get("tyre_age_at_start", "?")
                     })
-                st.dataframe(pd.DataFrame(stint_rows), use_container_width=True, hide_index=True)
+                render_data_table(stint_rows, team_col="Team")
             else:
                 st.info("📻 No tyre stint data available for this session yet.")
 
@@ -1385,7 +1687,7 @@ with tabs[8]:
                         "Lap": p.get("lap_number", "?"),
                         "Pit Duration (s)": p.get("pit_duration", "?")
                     })
-                st.dataframe(pd.DataFrame(pit_rows), use_container_width=True, hide_index=True)
+                render_data_table(pit_rows, team_col="Team")
             else:
                 st.info("📻 No pit stop data recorded for this session yet.")
 
