@@ -2,10 +2,65 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import json
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
+
+# ====================== PRE-RACE PREDICTION LOG (GitHub Gist — genuinely free, permanent forever) ======================
+# WHY A GIST INSTEAD OF A LOCAL FILE: a local JSON file does NOT survive a Streamlit Cloud
+# redeploy (the container resets on every git push). A GitHub Gist costs nothing, never expires,
+# never pauses for inactivity (unlike most free database tiers), and is the same account you're
+# already deploying from. ONE-TIME SETUP REQUIRED (free, ~2 minutes):
+#   1. Create a free GitHub Personal Access Token with the "gist" scope:
+#      https://github.com/settings/tokens -> Generate new token (classic) -> check "gist" only.
+#   2. Create an empty secret Gist (https://gist.github.com) with one file named prediction_log.json
+#      containing: {}
+#   3. In Streamlit Cloud -> App settings -> Secrets, add:
+#      GIST_TOKEN = "ghp_yourtokenhere"
+#      GIST_ID = "your_gist_id_from_the_url"
+# Until these secrets are set, the log gracefully runs in-memory for the current session only
+# (clearly flagged in the UI) rather than crashing the app.
+GIST_API_BASE = "https://api.github.com/gists"
+
+def _gist_configured():
+    try:
+        return bool(st.secrets.get("GIST_TOKEN")) and bool(st.secrets.get("GIST_ID"))
+    except Exception:
+        return False
+
+@st.cache_data(ttl=60)
+def load_prediction_log():
+    if not _gist_configured():
+        return st.session_state.get("_local_prediction_log", {})
+    try:
+        token = st.secrets["GIST_TOKEN"]
+        gist_id = st.secrets["GIST_ID"]
+        resp = requests.get(f"{GIST_API_BASE}/{gist_id}", headers={"Authorization": f"token {token}"}, timeout=8)
+        if resp.status_code == 200:
+            files = resp.json().get("files", {})
+            content = files.get("prediction_log.json", {}).get("content", "{}")
+            return json.loads(content)
+    except Exception:
+        pass
+    return {}
+
+def save_prediction_log(log):
+    if not _gist_configured():
+        st.session_state["_local_prediction_log"] = log
+        return "local"
+    try:
+        token = st.secrets["GIST_TOKEN"]
+        gist_id = st.secrets["GIST_ID"]
+        payload = {"files": {"prediction_log.json": {"content": json.dumps(log, indent=2)}}}
+        resp = requests.patch(f"{GIST_API_BASE}/{gist_id}", headers={"Authorization": f"token {token}"}, json=payload, timeout=8)
+        if resp.status_code == 200:
+            st.cache_data.clear()
+            return "github"
+    except Exception:
+        pass
+    return False
 
 # ====================== TEAM COLOURS + LOGO MAPPING (100% FREE, NO API KEYS) ======================
 # Colours are official-ish team hex codes. Logos are free public flag-style SVG badges
@@ -693,6 +748,107 @@ def simulate_remaining_season(per_round_meta, current_points, n_sims=3000, seed=
     return champ_pct, avg_final_points
 
 
+# ====================== PROPRIETARY RATING SYSTEM: "Pit Wall Performance Rating" (PWR) ======================
+# Pure compute on data already pulled elsewhere in this app — zero new API calls, zero cost.
+# A composite 0-100 score blending: season results, live rolling form, consistency, and reliability.
+# This is OUR weighting scheme, not an industry-standard metric — disclosed clearly in the UI.
+PWR_WEIGHTS = {"results": 0.40, "form": 0.25, "consistency": 0.20, "reliability": 0.15}
+
+def pwr_grade(score):
+    if score >= 90: return "S"
+    if score >= 75: return "A"
+    if score >= 60: return "B"
+    if score >= 45: return "C"
+    return "D"
+
+@st.cache_data(ttl=1800)
+def compute_pwr_ratings(_standings_df, _driver_bias, _pos_std, _dnf_rates):
+    """Builds the PWR score + Driver Form Index for every driver currently in the standings.
+    Leading underscore args tell Streamlit's cache not to hash unhashable objects (DataFrame/dicts)
+    by identity instead — fine here since this is recomputed deliberately via TTL."""
+    if _standings_df.empty:
+        return pd.DataFrame()
+
+    max_points = max(_standings_df['Points'].max(), 1)
+    rows = []
+    for _, row in _standings_df.iterrows():
+        d_id = row.get('DriverId', row['Driver'].lower().replace(" ", "_"))
+
+        results_score = (row['Points'] / max_points) * 100
+
+        # Form: driver_bias is centered at 0, negative = better. Convert to a 0-100 scale.
+        bias = _driver_bias.get(d_id, 0.0)
+        form_score = max(0, min(100, 50 - bias * 60))
+
+        # Consistency: lower finishing-position volatility = better. pos_std typically ranges ~0.8-4.5.
+        sigma = _pos_std.get(d_id, 2.5)
+        consistency_score = max(0, min(100, 100 - (sigma - 0.8) / (4.5 - 0.8) * 100))
+
+        # Reliability: inverse of historical DNF rate (clipped 2%-40% elsewhere).
+        dnf_p = _dnf_rates.get(d_id, 0.12)
+        reliability_score = max(0, min(100, (1 - dnf_p) * 100))
+
+        pwr = (
+            results_score * PWR_WEIGHTS["results"] +
+            form_score * PWR_WEIGHTS["form"] +
+            consistency_score * PWR_WEIGHTS["consistency"] +
+            reliability_score * PWR_WEIGHTS["reliability"]
+        )
+
+        rows.append({
+            "Driver": row['Driver'], "Team": row['Team'],
+            "PWR Score": round(pwr, 1), "Grade": pwr_grade(pwr),
+            "Form Index": round(form_score, 1),
+            "Results": round(results_score, 1),
+            "Consistency": round(consistency_score, 1),
+            "Reliability": round(reliability_score, 1),
+        })
+
+    return pd.DataFrame(rows).sort_values("PWR Score", ascending=False).reset_index(drop=True)
+
+
+# ====================== RACE DEBRIEF GENERATOR ======================
+# IMPORTANT HONESTY NOTE: this is a deterministic, rule-based natural-language template engine —
+# NOT a call to a hosted LLM/AI API. A real LLM API call costs money per request and would break
+# the "permanently free" requirement at any scale, so this builds prose directly from the same
+# numbers already computed elsewhere in the app (rolling form, safety-car proxy, anchor scores).
+def generate_race_debrief(sim_df, drivers_meta, constructor_bias, driver_bias, sc_p, race_name, weather):
+    if sim_df is None or sim_df.empty:
+        return "Not enough data to generate a debrief for this race yet."
+
+    favorite = sim_df.iloc[0]
+    second = sim_df.iloc[1] if len(sim_df) > 1 else None
+    margin = favorite['Win %'] - (second['Win %'] if second is not None else 0)
+
+    d_id_lookup = {d["Driver"]: d for d in drivers_meta}
+    fav_meta = d_id_lookup.get(favorite['Driver'], {})
+    fav_sigma = fav_meta.get("sigma", 2.5)
+    fav_dnf = fav_meta.get("dnf_p", 0.12)
+
+    sentences = []
+
+    if margin > 15:
+        sentences.append(f"The model favors **{favorite['Driver']}** by a wide margin this weekend, giving them a {favorite['Win %']}% win probability — well clear of {second['Driver'] if second is not None else 'the field'} at {second['Win %'] if second is not None else 0}%.")
+    elif margin > 5:
+        sentences.append(f"**{favorite['Driver']}** comes in as a moderate favorite at {favorite['Win %']}% win probability, with {second['Driver'] if second is not None else 'the rest of the field'} not far behind at {second['Win %'] if second is not None else 0}%.")
+    else:
+        sentences.append(f"This looks like a tight one — **{favorite['Driver']}** edges out the field with only a {favorite['Win %']}% win probability, barely ahead of {second['Driver'] if second is not None else 'the chasing pack'} at {second['Win %'] if second is not None else 0}%.")
+
+    if sc_p >= 0.35:
+        sentences.append(f"{race_name} has a historically high safety-car rate (≈{sc_p*100:.0f}% of past races here), which adds real variance to the result — the win probabilities above should be read as a range of plausible outcomes, not a near-certainty.")
+    elif sc_p <= 0.12:
+        sentences.append(f"{race_name} has a historically low safety-car rate (≈{sc_p*100:.0f}%), which reduces randomness and makes the favorite's position more secure than at a chaos-prone circuit.")
+
+    if fav_dnf >= 0.20:
+        sentences.append(f"Worth flagging: {favorite['Driver']}'s historical retirement rate ({fav_dnf*100:.0f}%) is on the higher side, which is already baked into the {favorite['DNF %']}% DNF probability above.")
+    if fav_sigma >= 3.5:
+        sentences.append(f"{favorite['Driver']}'s results have been fairly volatile historically (high race-to-race variance), so this projection carries more uncertainty than a more consistent driver's would.")
+
+    if "Rain" in weather:
+        sentences.append(f"{weather} conditions widen the spread of outcomes across the whole field — wet weather amplifies pace variance for everyone, which is reflected in the simulation above.")
+
+    return " ".join(sentences)
+
 @st.cache_data(ttl=1800)
 def get_rolling_form(year, n_races=5):
     """
@@ -816,7 +972,9 @@ with tabs[1]:
     st.markdown("### 📅 Full Season Calendar")
     render_data_table(calendar_df.to_dict("records"))
 
-    predict_tab, strategy_tab, season_tab, backtest_tab = st.tabs(["🎯 PREDICT NEXT RACE", "📋 STRATEGY SIMULATOR", "🏆 SEASON SIMULATOR", "🕰️ PREDICTION VS REALITY"])
+    predict_tab, whatif_tab, strategy_tab, season_tab, backtest_tab, tracker_tab = st.tabs(
+        ["🎯 PREDICT NEXT RACE", "🧪 WHAT-IF SANDBOX", "📋 STRATEGY SIMULATOR", "🏆 SEASON SIMULATOR", "🕰️ PREDICTION VS REALITY", "🎯 ACCURACY TRACKER"]
+    )
 
     # ============== SUB-TAB 1: PREDICT NEXT RACE ==============
     with predict_tab:
@@ -869,6 +1027,11 @@ with tabs[1]:
                                 </div>
                                 """, unsafe_allow_html=True)
 
+                        st.markdown("### 📝 Race Debrief")
+                        debrief_text = generate_race_debrief(sim_df, drivers_meta, constructor_bias, driver_bias, sc_p, next_race['name'], weather)
+                        st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #38bdf8;">{debrief_text}</div>', unsafe_allow_html=True)
+                        st.caption("Auto-generated from the same model inputs above via rule-based templates — not a paid AI/LLM call, so this stays free forever.")
+
                         st.markdown("### 📊 Full Probability Distribution (Win % / Podium % / Top 5 % / DNF %)")
                         st.caption("Ranked by simulated win probability — this reflects thousands of simulated race outcomes, not one fixed guess.")
                         st.dataframe(
@@ -890,8 +1053,104 @@ with tabs[1]:
                             - **Pace variance**: each driver's historical finishing-position volatility, amplified by wet weather.
                             - The race is simulated **{n_sims:,} times**; the percentages above are how often each driver landed in that position across all simulated races.
                             """)
+
+                        st.markdown("---")
+                        st.markdown("### 🔒 Public Prediction Log")
+                        if _gist_configured():
+                            st.caption("Lock this prediction in before the race happens. Once locked, it's frozen, timestamped, and saved permanently to a public GitHub Gist — the Prediction vs Reality tab will use this exact snapshot afterward instead of a re-simulated, lookahead-biased guess. This is what makes the model's track record actually checkable.")
+                        else:
+                            st.warning("⚠️ GitHub Gist storage isn't configured yet (GIST_TOKEN/GIST_ID secrets missing) — locked predictions will only persist for this browser session, not permanently. See the code comments at the top of app.py for the free 2-minute setup.")
+
+                        log = load_prediction_log()
+                        log_key = f"{current_year}-{next_race['round']}"
+
+                        if log_key in log:
+                            locked_at = log[log_key].get("logged_at", "unknown time")
+                            st.info(f"✅ Already locked for **{next_race['name']}** at {locked_at}. Predictions are frozen for this race — re-running the simulation above won't change the logged entry.")
+                        else:
+                            if st.button("🔒 Lock In This Prediction", use_container_width=True, key="lock_prediction_btn"):
+                                log[log_key] = {
+                                    "race_name": next_race['name'],
+                                    "year": current_year,
+                                    "round": next_race['round'],
+                                    "circuit": next_race['circuit'],
+                                    "weather": weather,
+                                    "track_temp": track_temp,
+                                    "n_sims": n_sims,
+                                    "logged_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+                                    "predictions": sim_df.to_dict("records")
+                                }
+                                save_result = save_prediction_log(log)
+                                if save_result == "github":
+                                    st.success(f"🔒 Locked in for **{next_race['name']}** — saved permanently to GitHub.")
+                                    st.rerun()
+                                elif save_result == "local":
+                                    st.warning(f"🔒 Locked in for **{next_race['name']}** for this session only — set up GIST_TOKEN/GIST_ID secrets for permanent storage.")
+                                    st.rerun()
+                                else:
+                                    st.error("Couldn't write the prediction log — check the GitHub token/Gist ID in Streamlit secrets.")
+
                 except Exception as e:
                     st.error(f"Simulation error: {str(e)}")
+
+        full_log = load_prediction_log()
+        if full_log:
+            with st.expander(f"📜 View All Locked Predictions ({len(full_log)} race(s) logged)"):
+                log_rows = [{
+                    "Race": v.get("race_name", "Unknown"),
+                    "Round": v.get("round", "?"),
+                    "Locked At": v.get("logged_at", "?"),
+                    "Top Pick": v["predictions"][0]["Driver"] if v.get("predictions") else "?",
+                    "Win %": v["predictions"][0]["Win %"] if v.get("predictions") else "?"
+                } for v in sorted(full_log.values(), key=lambda x: (x.get("year", 0), int(x.get("round", 0)) if str(x.get("round", "0")).isdigit() else 0))]
+                render_data_table(log_rows)
+
+    # ============== SUB-TAB: WHAT-IF SANDBOX ==============
+    with whatif_tab:
+        st.caption("Construct your own hypothetical scenario: override any driver's starting grid position and rerun the full Monte Carlo engine to see how win/podium odds shift. Uses the same model, risk profile, and live rolling form as the main predictor — just with a grid you control instead of the real qualifying result.")
+
+        whatif_weather = st.selectbox("Track Conditions", ["Dry", "Light Rain", "Heavy Rain", "Hot & Dry"], index=0, key="whatif_weather")
+        whatif_temp = st.slider("Track Temperature (°C)", 20, 60, 38, key="whatif_temp")
+        whatif_nsims = st.select_slider("Monte Carlo Iterations", options=[1000, 2500, 5000], value=2500, key="whatif_nsims")
+
+        base_grid_list = fetch_grid_for_round(current_year, next_race['round'], standings_df)
+
+        st.markdown("#### 🛠️ Override Starting Grid")
+        st.caption("Defaults to the real (or projected) grid. Change any value to build a hypothetical — e.g. 'what if the championship leader started P15?'")
+
+        edited_grid = []
+        edit_cols = st.columns(2)
+        for i, entry in enumerate(base_grid_list[:20]):
+            with edit_cols[i % 2]:
+                new_pos = st.number_input(f"{entry['driver']} ({entry['team']})", min_value=1, max_value=22, value=entry['grid'], key=f"whatif_grid_{i}")
+                edited_grid.append({**entry, "grid": new_pos})
+
+        if st.button("🧪 Run What-If Simulation", type="primary", use_container_width=True, key="whatif_btn"):
+            with st.spinner("Running the sandbox scenario..."):
+                try:
+                    model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
+                    drivers_meta, anchor_scores = build_drivers_meta(
+                        edited_grid, current_year, next_race['round'], next_race["circuit"], whatif_weather, whatif_temp,
+                        model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                    )
+                    if not drivers_meta:
+                        st.warning("Not enough grid data to run this scenario.")
+                    else:
+                        sc_p = sc_proxy.get(next_race["circuit"], 0.20)
+                        whatif_df = run_monte_carlo(drivers_meta, anchor_scores, sc_p, whatif_weather, whatif_nsims)
+
+                        st.success("🧪 What-if scenario results")
+                        st.dataframe(
+                            whatif_df, use_container_width=True, hide_index=True,
+                            column_config={
+                                "Win %": st.column_config.ProgressColumn("Win %", min_value=0, max_value=max(1.0, whatif_df["Win %"].max()), format="%.1f%%"),
+                                "Podium %": st.column_config.ProgressColumn("Podium %", min_value=0, max_value=100, format="%.1f%%"),
+                            }
+                        )
+                        whatif_debrief = generate_race_debrief(whatif_df, drivers_meta, constructor_bias, driver_bias, sc_p, next_race['name'], whatif_weather)
+                        st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #a855f7;">{whatif_debrief}</div>', unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"What-if simulation error: {str(e)}")
 
     # ============== SUB-TAB 2: STRATEGY SIMULATOR ==============
     with strategy_tab:
@@ -1082,10 +1341,10 @@ with tabs[1]:
 
     # ============== SUB-TAB 3: PREDICTION VS REALITY ==============
     with backtest_tab:
-        st.caption("A retrospective check: rerun the simulation for the most recently completed race using its actual qualifying grid, then compare against what really happened. This uses today's rolling-form numbers rather than a frozen pre-race snapshot, so treat it as a sanity-check on the model, not a strict logged forecast history.")
+        st.caption("Checks the model's pre-race predictions against what actually happened. If a prediction was locked in beforehand (left tab), this uses that exact frozen snapshot — a true blind forecast, no lookahead bias. Otherwise it falls back to re-simulating with today's rolling form, clearly flagged as a sanity-check rather than a strict logged forecast.")
 
         if st.button("🕰️ Backtest Most Recent Race", type="primary", use_container_width=True, key="backtest_btn"):
-            with st.spinner("Pulling the last completed race and rerunning the simulation..."):
+            with st.spinner("Pulling the last completed race and checking the prediction..."):
                 try:
                     races = get_recent_results(current_year)
                     completed = [r for r in races if r.get('Results')]
@@ -1095,6 +1354,8 @@ with tabs[1]:
                         last_race = completed[-1]
                         round_num = int(last_race['round'])
                         circuit_id = last_race['Circuit']['circuitId']
+                        log_key = f"{current_year}-{round_num}"
+                        pred_log = load_prediction_log()
 
                         actual_top3 = [{
                             "Pos": int(res['position']),
@@ -1102,20 +1363,32 @@ with tabs[1]:
                             "Team": res['Constructor']['name']
                         } for res in last_race['Results'][:3]]
 
-                        model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
-                        grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
-                        drivers_meta, anchor_scores = build_drivers_meta(
-                            grid_list, current_year, round_num, circuit_id, "Dry", 38,
-                            model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
-                        )
+                        if log_key in pred_log:
+                            sim_df = pd.DataFrame(pred_log[log_key]["predictions"])
+                            is_frozen = True
+                            logged_at = pred_log[log_key].get("logged_at", "unknown time")
+                        else:
+                            model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
+                            grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
+                            drivers_meta, anchor_scores = build_drivers_meta(
+                                grid_list, current_year, round_num, circuit_id, "Dry", 38,
+                                model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                            )
+                            sim_df = None
+                            is_frozen = False
+                            logged_at = None
+                            if drivers_meta:
+                                sc_p = sc_proxy.get(circuit_id, 0.20)
+                                sim_df = run_monte_carlo(drivers_meta, anchor_scores, sc_p, "Dry", 5000)
 
-                        if not drivers_meta:
+                        if sim_df is None or sim_df.empty:
                             st.warning("Couldn't rebuild the grid for this race to backtest.")
                         else:
-                            sc_p = sc_proxy.get(circuit_id, 0.20)
-                            sim_df = run_monte_carlo(drivers_meta, anchor_scores, sc_p, "Dry", 5000)
-
                             st.success(f"🕰️ Prediction vs Reality — **{last_race['raceName']}**")
+                            if is_frozen:
+                                st.markdown(f'<span style="color:#22c55e; font-weight:700;">✅ Using a FROZEN pre-race prediction, locked on {logged_at} — no lookahead bias.</span>', unsafe_allow_html=True)
+                            else:
+                                st.caption("⚠️ No frozen prediction was logged for this race ahead of time — this is a re-simulation using today's rolling form, so treat it as a sanity-check, not a strict forecast record.")
 
                             real_col, pred_col = st.columns(2)
                             with real_col:
@@ -1145,39 +1418,220 @@ with tabs[1]:
                 except Exception as e:
                     st.error(f"Backtest error: {str(e)}")
 
+        st.markdown("---")
+        st.markdown("### 📊 Model vs. Baseline — Is This Actually Better Than a Coin Flip?")
+        st.caption("The honest test: across the last several completed races, how often did the model's #1 pick actually win, vs. simply always picking the pole-sitter? Pole position is a strong, free, zero-effort baseline — beating it is the real bar, not just 'sounding confident'.")
+
+        n_baseline_races = st.slider("Races to check", 3, 8, 5, key="baseline_n_races")
+
+        if st.button("📊 Run Baseline Comparison", use_container_width=True, key="baseline_btn"):
+            with st.spinner(f"Checking the model against the last {n_baseline_races} completed races..."):
+                try:
+                    races = get_recent_results(current_year)
+                    completed = [r for r in races if r.get('Results')]
+                    if len(completed) < 2:
+                        st.info("Not enough completed races yet this season to run a meaningful baseline comparison.")
+                    else:
+                        recent_races = completed[-n_baseline_races:]
+                        pred_log = load_prediction_log()
+                        model_obj, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
+
+                        rows = []
+                        for race in recent_races:
+                            round_num = int(race['round'])
+                            circuit_id = race['Circuit']['circuitId']
+                            actual_winner = f"{race['Results'][0]['Driver']['givenName']} {race['Results'][0]['Driver']['familyName']}"
+
+                            pole_sitter = None
+                            for res in race['Results']:
+                                if str(res.get('grid')) == '1':
+                                    pole_sitter = f"{res['Driver']['givenName']} {res['Driver']['familyName']}"
+                                    break
+
+                            log_key = f"{current_year}-{round_num}"
+                            if log_key in pred_log:
+                                model_pick = pred_log[log_key]["predictions"][0]["Driver"]
+                                source = "frozen"
+                            else:
+                                grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
+                                d_meta, a_scores = build_drivers_meta(
+                                    grid_list, current_year, round_num, circuit_id, "Dry", 38,
+                                    model_obj, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                                )
+                                if d_meta:
+                                    sc_p_r = sc_proxy.get(circuit_id, 0.20)
+                                    quick_sim = run_monte_carlo(d_meta, a_scores, sc_p_r, "Dry", 1500)
+                                    model_pick = quick_sim.iloc[0]['Driver']
+                                else:
+                                    model_pick = None
+                                source = "re-simulated"
+
+                            rows.append({
+                                "Race": race['raceName'],
+                                "Actual Winner": actual_winner,
+                                "Model Pick": model_pick or "N/A",
+                                "Model Hit": "✅" if model_pick == actual_winner else "❌",
+                                "Pole Sitter": pole_sitter or "N/A",
+                                "Pole Hit": "✅" if pole_sitter == actual_winner else "❌",
+                                "Source": source
+                            })
+
+                        results_df = pd.DataFrame(rows)
+                        model_hit_rate = (results_df["Model Hit"] == "✅").mean() * 100
+                        pole_hit_rate = (results_df["Pole Hit"] == "✅").mean() * 100
+
+                        bc1, bc2 = st.columns(2)
+                        with bc1:
+                            color = "#22c55e" if model_hit_rate >= pole_hit_rate else "#ef4444"
+                            st.markdown(f'<div class="pitwall-card" style="border-left:4px solid {color};"><h3>🤖 Model Win-Pick Accuracy</h3><h2>{model_hit_rate:.0f}%</h2><small>across {len(results_df)} races</small></div>', unsafe_allow_html=True)
+                        with bc2:
+                            st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #94a3b8;"><h3>🏁 Always-Pick-Pole Baseline</h3><h2>{pole_hit_rate:.0f}%</h2><small>across {len(results_df)} races</small></div>', unsafe_allow_html=True)
+
+                        if model_hit_rate > pole_hit_rate:
+                            st.success(f"The model beat the naive pole-position baseline by {model_hit_rate - pole_hit_rate:.0f} percentage points over this window.")
+                        elif model_hit_rate == pole_hit_rate:
+                            st.info("The model matched the naive pole-position baseline over this window — no edge shown yet.")
+                        else:
+                            st.warning(f"The model underperformed the naive pole-position baseline by {pole_hit_rate - model_hit_rate:.0f} percentage points over this window. Small sample sizes can swing this a lot — worth re-checking after more races.")
+
+                        render_data_table(results_df.to_dict("records"))
+                        st.caption("'Re-simulated' rows didn't have a frozen pre-race log entry, so they use today's rolling form — a small lookahead-bias caveat worth knowing. Lock in predictions before future races to make this comparison fully rigorous over time.")
+                except Exception as e:
+                    st.error(f"Baseline comparison error: {str(e)}")
+
+    # ============== SUB-TAB: ACCURACY TRACKER ==============
+    with tracker_tab:
+        st.caption("The cumulative, persistent record: every prediction you've locked in (left tabs), checked against real results once each race finishes. This is the running track record — not a one-off spot check.")
+
+        if st.button("🔄 Refresh Tracker", use_container_width=True, key="tracker_refresh_btn"):
+            st.cache_data.clear()
+            st.rerun()
+
+        try:
+            tracker_log = load_prediction_log()
+            if not tracker_log:
+                st.info("No predictions have been locked in yet. Head to 'Predict Next Race' and lock one in before a race weekend to start building a track record.")
+            else:
+                races_with_results = get_recent_results(current_year)
+                results_by_round = {int(r['round']): r for r in races_with_results if r.get('Results')}
+
+                tracked_rows = []
+                for key, entry in tracker_log.items():
+                    round_num = int(entry.get("round", 0)) if str(entry.get("round", "")).isdigit() else None
+                    if round_num is None or round_num not in results_by_round:
+                        tracked_rows.append({
+                            "Race": entry.get("race_name", "Unknown"), "Locked At": entry.get("logged_at", "?"),
+                            "Top Pick": entry["predictions"][0]["Driver"] if entry.get("predictions") else "?",
+                            "Status": "⏳ Race not completed yet", "Hit": None
+                        })
+                        continue
+                    actual_winner = f"{results_by_round[round_num]['Results'][0]['Driver']['givenName']} {results_by_round[round_num]['Results'][0]['Driver']['familyName']}"
+                    model_pick = entry["predictions"][0]["Driver"] if entry.get("predictions") else None
+                    hit = model_pick == actual_winner
+                    tracked_rows.append({
+                        "Race": entry.get("race_name", "Unknown"), "Locked At": entry.get("logged_at", "?"),
+                        "Top Pick": model_pick or "?", "Actual Winner": actual_winner,
+                        "Status": "✅ Hit" if hit else "❌ Miss", "Hit": hit
+                    })
+
+                completed_rows = [r for r in tracked_rows if r["Hit"] is not None]
+                if completed_rows:
+                    hit_rate = sum(1 for r in completed_rows if r["Hit"]) * 100 / len(completed_rows)
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #22c55e;"><h3>🎯 Cumulative Win-Pick Accuracy</h3><h2>{hit_rate:.0f}%</h2><small>across {len(completed_rows)} locked-and-completed race(s)</small></div>', unsafe_allow_html=True)
+                else:
+                    st.info("Predictions are locked in but no tracked races have completed yet — check back after the next race weekend.")
+
+                st.markdown("#### Full Tracking Log")
+                render_data_table([{k: v for k, v in row.items() if k != "Hit"} for row in tracked_rows])
+        except Exception as e:
+            st.error(f"Accuracy tracker error: {str(e)}")
+
 # ====================== DRIVER STAT CARDS ======================
 with tabs[2]:
     st.subheader("🪪 Driver Stat Cards")
-    st.caption("Live season stats pulled straight from the standings feed — team-coloured, zero cost.")
 
-    if standings_df.empty:
-        st.warning("Driver data is temporarily unavailable. Try again shortly.")
-    else:
-        sort_choice = st.radio("Sort by", ["Championship Position", "Points (High→Low)", "Wins"], horizontal=True)
-        sdf = standings_df.copy()
-        if sort_choice == "Points (High→Low)":
-            sdf = sdf.sort_values("Points", ascending=False)
-        elif sort_choice == "Wins":
-            sdf = sdf.sort_values("Wins", ascending=False)
+    cards_subtab, rating_subtab = st.tabs(["🪪 STAT CARDS", "⭐ PWR RATING & FORM INDEX"])
+
+    with cards_subtab:
+        st.caption("Live season stats pulled straight from the standings feed — team-coloured, zero cost.")
+
+        if standings_df.empty:
+            st.warning("Driver data is temporarily unavailable. Try again shortly.")
         else:
-            sdf = sdf.sort_values("Pos")
+            sort_choice = st.radio("Sort by", ["Championship Position", "Points (High→Low)", "Wins"], horizontal=True)
+            sdf = standings_df.copy()
+            if sort_choice == "Points (High→Low)":
+                sdf = sdf.sort_values("Points", ascending=False)
+            elif sort_choice == "Wins":
+                sdf = sdf.sort_values("Wins", ascending=False)
+            else:
+                sdf = sdf.sort_values("Pos")
 
-        cards_per_row = 4
-        rows = [sdf.iloc[i:i + cards_per_row] for i in range(0, len(sdf), cards_per_row)]
-        for row_chunk in rows:
-            cols = st.columns(cards_per_row)
-            for col, (_, d) in zip(cols, row_chunk.iterrows()):
-                meta = team_meta(d['Team'])
-                with col:
-                    st.markdown(f"""
-                    <div class="driver-card" style="border:1px solid {meta['color']}; border-top:5px solid {meta['color']};">
-                        <span class="badge" style="background:{meta['color']};">{meta['short']}</span>
-                        <h3>{meta['emoji']} {d['Driver']}</h3>
-                        <div class="sub">{d['Team']} • {d.get('Nationality', '—')}</div>
-                        <div class="pts" style="color:{meta['color']};">P{int(d['Pos'])} · {int(d['Points'])} pts</div>
-                        <div class="sub">🏁 {int(d.get('Wins', 0))} win(s) this season</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            cards_per_row = 4
+            rows = [sdf.iloc[i:i + cards_per_row] for i in range(0, len(sdf), cards_per_row)]
+            for row_chunk in rows:
+                cols = st.columns(cards_per_row)
+                for col, (_, d) in zip(cols, row_chunk.iterrows()):
+                    meta = team_meta(d['Team'])
+                    with col:
+                        st.markdown(f"""
+                        <div class="driver-card" style="border:1px solid {meta['color']}; border-top:5px solid {meta['color']};">
+                            <span class="badge" style="background:{meta['color']};">{meta['short']}</span>
+                            <h3>{meta['emoji']} {d['Driver']}</h3>
+                            <div class="sub">{d['Team']} • {d.get('Nationality', '—')}</div>
+                            <div class="pts" style="color:{meta['color']};">P{int(d['Pos'])} · {int(d['Points'])} pts</div>
+                            <div class="sub">🏁 {int(d.get('Wins', 0))} win(s) this season</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+    with rating_subtab:
+        st.caption("**Pit Wall Performance Rating (PWR)** — our own proprietary 0-100 score blending season results (40%), live rolling form (25%), finishing-position consistency (20%), and reliability/DNF history (15%). This is our weighting, not an official F1 metric — disclosed plainly. Computed entirely from data already pulled elsewhere in this app, zero new cost.")
+
+        if standings_df.empty:
+            st.warning("Driver data is temporarily unavailable. Try again shortly.")
+        else:
+            try:
+                _, _, _, _, dnf_rates_pwr, pos_std_pwr, _ = train_model_and_risk_profile(current_year)
+                pwr_df = compute_pwr_ratings(standings_df, driver_bias, pos_std_pwr, dnf_rates_pwr)
+
+                if pwr_df.empty:
+                    st.info("Not enough data yet to compute ratings.")
+                else:
+                    top3 = pwr_df.head(3)
+                    cols = st.columns(3)
+                    for i, (_, d) in enumerate(top3.iterrows()):
+                        with cols[i]:
+                            dmeta = team_meta(d['Team'])
+                            st.markdown(f"""
+                            <div class="podium-card" style="text-align:center; padding:20px; background:#1a1e2a; border-radius:12px; border:2px solid {dmeta['color']};">
+                                <h2>{["🥇","🥈","🥉"][i]} {d['Grade']}-Tier</h2>
+                                <h3>{dmeta['emoji']} {d['Driver']}</h3>
+                                <p style="color:{dmeta['color']}; font-weight:700;">{d['Team']}</p>
+                                <h2>{d['PWR Score']} PWR</h2>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    st.markdown("#### Full PWR Leaderboard")
+                    st.dataframe(
+                        pwr_df, use_container_width=True, hide_index=True,
+                        column_config={
+                            "PWR Score": st.column_config.ProgressColumn("PWR Score", min_value=0, max_value=100, format="%.1f"),
+                            "Form Index": st.column_config.ProgressColumn("Form Index", min_value=0, max_value=100, format="%.1f"),
+                            "Results": st.column_config.ProgressColumn("Results", min_value=0, max_value=100, format="%.1f"),
+                            "Consistency": st.column_config.ProgressColumn("Consistency", min_value=0, max_value=100, format="%.1f"),
+                            "Reliability": st.column_config.ProgressColumn("Reliability", min_value=0, max_value=100, format="%.1f"),
+                        }
+                    )
+                    with st.expander("ℹ️ How PWR and Form Index are calculated"):
+                        st.markdown("""
+                        - **Results (40%)**: this season's points as a share of the championship leader's points.
+                        - **Form Index (25%)**: derived from the same live rolling-form bias (last 5 races) used in the Podium Predictor — a driver trending upward scores higher here, automatically, race after race.
+                        - **Consistency (20%)**: inverse of historical finishing-position volatility — a driver who reliably finishes in a tight range scores higher than one who swings between P2 and P15.
+                        - **Reliability (15%)**: inverse of historical DNF rate.
+                        - **Grade tiers**: S (90+), A (75+), B (60+), C (45+), D (below 45).
+                        """)
+            except Exception as e:
+                st.error(f"Rating calculation error: {str(e)}")
 
 # ====================== DRIVER COMPARISON ======================
 with tabs[3]:
