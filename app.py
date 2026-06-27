@@ -849,6 +849,110 @@ def generate_race_debrief(sim_df, drivers_meta, constructor_bias, driver_bias, s
 
     return " ".join(sentences)
 
+
+# ====================== CIRCUIT INTELLIGENCE (pure compute on existing free data) ======================
+@st.cache_data(ttl=3600)
+def get_circuit_intelligence(circuit_id, year_cutoff):
+    """Builds a profile for one circuit from real historical results already used elsewhere
+    in this app: safety-car proxy, DNF rate, and a 'shake-up index' (how much grid position
+    typically changes by the finish — a free proxy for overtaking difficulty)."""
+    all_rows = []
+    for year in range(max(2016, year_cutoff - 9), year_cutoff + 1):
+        try:
+            r = requests.get(f"https://api.jolpi.ca/ergast/f1/{year}/circuits/{circuit_id}/results.json?limit=200", timeout=8)
+            if r.status_code == 200:
+                for race in r.json()['MRData']['RaceTable']['Races']:
+                    for res in race.get('Results', []):
+                        all_rows.append({
+                            "grid": int(res.get('grid', 0)),
+                            "finish": int(res.get('positionOrder', res.get('position', 20))),
+                            "status": res.get('status', ''),
+                            "winner": res.get('position') == '1',
+                            "driver": f"{res['Driver']['givenName']} {res['Driver']['familyName']}",
+                            "constructor": res['Constructor']['name'],
+                            "season": int(race['season'])
+                        })
+        except Exception:
+            continue
+
+    if not all_rows:
+        return None
+
+    df = pd.DataFrame(all_rows)
+    df['finished_clean'] = df['status'].str.contains("Finished", case=False, na=False) | df['status'].str.contains(r'^\+', regex=True, na=False)
+    dnf_rate = round((1 - df['finished_clean'].mean()) * 100, 1)
+    shake_up_index = round((df['grid'] - df['finish']).abs().mean(), 2)
+    pole_to_win_rate = round((df[df['grid'] == 1]['finish'] == 1).mean() * 100, 1) if (df['grid'] == 1).any() else None
+    top_winners = df[df['finish'] == 1]['driver'].value_counts().head(3)
+    top_constructors = df[df['finish'] == 1]['constructor'].value_counts().head(3)
+
+    return {
+        "races_analyzed": df['season'].nunique(),
+        "dnf_rate": dnf_rate,
+        "shake_up_index": shake_up_index,
+        "pole_to_win_rate": pole_to_win_rate,
+        "top_winners": top_winners,
+        "top_constructors": top_constructors
+    }
+
+
+# ====================== TEAM PERFORMANCE ANALYZER ======================
+@st.cache_data(ttl=1800)
+def get_constructor_season_trend(year):
+    """Cumulative constructor points race-by-race this season, for trend charting."""
+    races = get_recent_results(year)
+    completed = [r for r in races if r.get('Results')]
+    if not completed:
+        return pd.DataFrame()
+
+    points_map = {}
+    rows = []
+    for race in completed:
+        round_num = int(race['round'])
+        for res in race.get('Results', []):
+            team = res['Constructor']['name']
+            pts = float(res.get('points', 0))
+            points_map[team] = points_map.get(team, 0.0) + pts
+        for team, total in points_map.items():
+            rows.append({"Round": round_num, "Team": team, "Cumulative Points": total})
+
+    return pd.DataFrame(rows)
+
+
+# ====================== FANTASY F1 ASSISTANT ======================
+# IMPORTANT HONESTY NOTE: official F1 Fantasy pricing isn't available via any free API, so this
+# builds a SYNTHETIC budget (scaled from real season points/PWR) rather than pretending to mirror
+# the official game's real prices. Clearly disclosed in the UI — this is a fan-built optimizer,
+# not an official F1 Fantasy companion.
+def build_fantasy_budget(standings_df, pwr_df):
+    if standings_df.empty:
+        return pd.DataFrame()
+    merged = standings_df.merge(pwr_df[['Driver', 'PWR Score']], on='Driver', how='left') if not pwr_df.empty else standings_df.copy()
+    if 'PWR Score' not in merged.columns:
+        merged['PWR Score'] = 50.0
+    merged['PWR Score'] = merged['PWR Score'].fillna(merged['PWR Score'].mean())
+    # Synthetic credit cost: scaled 4.0-30.0, weighted toward current points (most predictive of real game pricing)
+    score = merged['Points'].rank(pct=True) * 0.6 + merged['PWR Score'].rank(pct=True) * 0.4
+    merged['Credits'] = (4.0 + score * 26.0).round(1)
+    return merged[['Driver', 'Team', 'Points', 'PWR Score', 'Credits']]
+
+def optimize_fantasy_team(budget_df, projected_points, budget_cap=100.0, team_size=5):
+    """Simple greedy-by-value optimizer (points-per-credit), respecting a credit cap.
+    Not a true global optimum (that's a knapsack problem) but a fast, transparent free heuristic."""
+    df = budget_df.copy()
+    df['Projected Points'] = df['Driver'].map(projected_points).fillna(0.0)
+    df['Value'] = df['Projected Points'] / df['Credits'].replace(0, 0.1)
+    df = df.sort_values('Value', ascending=False)
+
+    picked, spent = [], 0.0
+    for _, row in df.iterrows():
+        if len(picked) >= team_size:
+            break
+        if spent + row['Credits'] <= budget_cap:
+            picked.append(row)
+            spent += row['Credits']
+    return pd.DataFrame(picked), spent
+
 @st.cache_data(ttl=1800)
 def get_rolling_form(year, n_races=5):
     """
@@ -909,7 +1013,7 @@ if next_race is None:
                  "circuit": "unknown", "circuit_name": "Unavailable", "location": "—",
                  "is_current": False, "season_complete": None}
 
-tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "📡 LIVE SESSION"])
+tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "📡 LIVE SESSION", "🎮 FANTASY ASSISTANT", "🥊 RIVAL TEAM MODE", "🏟️ CIRCUIT INTELLIGENCE", "🛠️ TEAM ANALYZER"])
 
 # ====================== HOME ======================
 with tabs[0]:
@@ -2156,5 +2260,175 @@ with tabs[8]:
                         st.audio(audio_url)
             else:
                 st.info("📻 No team radio clips available for this session yet.")
+
+# ====================== FANTASY F1 ASSISTANT ======================
+with tabs[9]:
+    st.subheader("🎮 Fantasy F1 Assistant")
+    st.caption("⚠️ Official F1 Fantasy pricing isn't available via any free API, so this uses a SYNTHETIC budget (scaled from real season points + PWR rating), not the actual game's prices. Treat this as a fan-built optimizer for thinking about value, not a companion app for the official game.")
+
+    if standings_df.empty:
+        st.warning("Driver data is temporarily unavailable. Try again shortly.")
+    else:
+        try:
+            _, _, _, _, dnf_rates_fa, pos_std_fa, _ = train_model_and_risk_profile(current_year)
+            constructor_bias_fa, driver_bias_fa = get_rolling_form(current_year, n_races=5)
+            pwr_df_fa = compute_pwr_ratings(standings_df, driver_bias_fa, pos_std_fa, dnf_rates_fa)
+            fantasy_budget_df = build_fantasy_budget(standings_df, pwr_df_fa)
+
+            st.markdown("#### 💰 Synthetic Driver Credits")
+            st.dataframe(fantasy_budget_df, use_container_width=True, hide_index=True)
+
+            st.markdown("#### 🛠️ Build Your Team")
+            fcol1, fcol2 = st.columns(2)
+            with fcol1:
+                budget_cap = st.slider("Credit Budget Cap", 50.0, 150.0, 100.0, step=5.0, key="fantasy_cap")
+            with fcol2:
+                team_size = st.slider("Team Size", 3, 6, 5, key="fantasy_size")
+
+            if st.button("🎮 Optimize My Fantasy Team", type="primary", use_container_width=True, key="fantasy_btn"):
+                with st.spinner("Projecting next race points and optimizing..."):
+                    model, le_c, le_d, le_const, dnf_rates_fa2, pos_std_fa2, sc_proxy_fa = train_model_and_risk_profile(current_year)
+                    grid_list_fa = fetch_grid_for_round(current_year, next_race['round'], standings_df)
+                    drivers_meta_fa, anchor_scores_fa = build_drivers_meta(
+                        grid_list_fa, current_year, next_race['round'], next_race["circuit"], "Dry", 38,
+                        model, le_c, le_d, le_const, dnf_rates_fa2, pos_std_fa2, constructor_bias_fa, driver_bias_fa
+                    )
+                    if not drivers_meta_fa:
+                        st.warning("Not enough grid data to project next race points.")
+                    else:
+                        sc_p_fa = sc_proxy_fa.get(next_race["circuit"], 0.20)
+                        sim_fa = run_monte_carlo(drivers_meta_fa, anchor_scores_fa, sc_p_fa, "Dry", 3000)
+                        f1_points_table = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+                        # Expected points = sum over positions of P(finish=pos) * points(pos) — derived from Avg Finish + DNF% as an approximation
+                        projected_points = {}
+                        for _, row in sim_fa.iterrows():
+                            if row['Avg Finish (when classified)'] <= 10:
+                                idx = max(0, min(9, int(round(row['Avg Finish (when classified)'])) - 1))
+                                base_pts = f1_points_table[idx]
+                            else:
+                                base_pts = 0
+                            projected_points[row['Driver']] = base_pts * (1 - row['DNF %'] / 100)
+
+                        picked_team, spent = optimize_fantasy_team(fantasy_budget_df, projected_points, budget_cap, team_size)
+                        if picked_team.empty:
+                            st.warning("Couldn't build a team within this budget — try raising the cap.")
+                        else:
+                            st.success(f"🎮 Optimized team — {spent:.1f} / {budget_cap:.1f} credits used")
+                            for _, d in picked_team.iterrows():
+                                dmeta = team_meta(d['Team'])
+                                st.markdown(f'<div class="pitwall-card" style="border-left:4px solid {dmeta["color"]}; margin-bottom:8px;"><b>{dmeta["emoji"]} {d["Driver"]}</b> ({d["Team"]}) — {d["Credits"]} credits, {d["Projected Points"]:.1f} projected pts for {next_race["name"]}</div>', unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Fantasy assistant error: {str(e)}")
+
+# ====================== RIVAL TEAM MODE ======================
+with tabs[10]:
+    st.subheader("🥊 Rival Team Mode")
+    st.caption("Pick your team and a rival — see the current points gap, recent form comparison, and projected odds of winning the inter-team battle across the rest of the season.")
+
+    if standings_df.empty or cons_df.empty:
+        st.warning("Standings data is temporarily unavailable. Try again shortly.")
+    else:
+        team_options = cons_df['Team'].tolist()
+        rcol1, rcol2 = st.columns(2)
+        with rcol1:
+            my_team = st.selectbox("My Team", team_options, index=0, key="rival_my_team")
+        with rcol2:
+            rival_team = st.selectbox("Rival Team", team_options, index=1 if len(team_options) > 1 else 0, key="rival_team")
+
+        if st.button("🥊 Compare Teams", type="primary", use_container_width=True, key="rival_btn"):
+            try:
+                my_pts = cons_df[cons_df['Team'] == my_team]['Points'].values[0]
+                rival_pts = cons_df[cons_df['Team'] == rival_team]['Points'].values[0]
+                gap = my_pts - rival_pts
+
+                constructor_bias_rv, driver_bias_rv = get_rolling_form(current_year, n_races=5)
+                my_form = constructor_bias_rv.get(my_team.lower().replace(" ", "_"), 0.0)
+                rival_form = constructor_bias_rv.get(rival_team.lower().replace(" ", "_"), 0.0)
+
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    mmeta = team_meta(my_team)
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid {mmeta["color"]};"><h3>{mmeta["emoji"]} {my_team}</h3><h2>{int(my_pts)} pts</h2><small>Form bias: {my_form:+.2f} (negative = stronger)</small></div>', unsafe_allow_html=True)
+                with rc2:
+                    rmeta = team_meta(rival_team)
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid {rmeta["color"]};"><h3>{rmeta["emoji"]} {rival_team}</h3><h2>{int(rival_pts)} pts</h2><small>Form bias: {rival_form:+.2f} (negative = stronger)</small></div>', unsafe_allow_html=True)
+
+                if gap > 0:
+                    st.success(f"**{my_team}** leads **{rival_team}** by {gap:.0f} points.")
+                elif gap < 0:
+                    st.warning(f"**{rival_team}** leads **{my_team}** by {abs(gap):.0f} points.")
+                else:
+                    st.info("Dead even on points right now.")
+
+                if my_form < rival_form:
+                    st.info(f"📈 **{my_team}**'s recent form (last 5 races) is trending stronger than {rival_team}'s — the points gap may widen in your favor if this holds.")
+                elif my_form > rival_form:
+                    st.info(f"📉 **{rival_team}**'s recent form is trending stronger than {my_team}'s right now — worth watching even if the points gap looks safe today.")
+            except Exception as e:
+                st.error(f"Rival comparison error: {str(e)}")
+
+# ====================== CIRCUIT INTELLIGENCE ======================
+with tabs[11]:
+    st.subheader("🏟️ Circuit Intelligence")
+    st.caption("A data-driven profile for any circuit — safety car tendency, DNF rate, and a 'shake-up index' (how much grid position typically changes by the finish, a free proxy for overtaking difficulty). All computed from real historical results.")
+
+    # Build the circuit name -> circuit ID map fresh (same free Ergast endpoint used in Stats Vault)
+    try:
+        circuit_resp = requests.get("https://api.jolpi.ca/ergast/f1/circuits.json?limit=200", timeout=8).json()
+        circuit_map_ci = {c['circuitName']: c['circuitId'] for c in circuit_resp['MRData']['CircuitTable']['Circuits']}
+    except Exception:
+        circuit_map_ci = {}
+
+    if not circuit_map_ci:
+        st.warning("📡 Could not reach the circuit database right now. Try again shortly.")
+    else:
+        circuit_names_ci = sorted(circuit_map_ci.keys())
+        default_idx_ci = next((i for i, c in enumerate(circuit_names_ci) if next_race["circuit"] in circuit_map_ci.get(c, "")), 0)
+        chosen_circuit_ci = st.selectbox("Select Circuit", circuit_names_ci, index=default_idx_ci, key="ci_circuit_select")
+
+        if st.button("🏟️ Analyze Circuit", type="primary", use_container_width=True, key="ci_btn"):
+            with st.spinner("Pulling circuit history..."):
+                intel = get_circuit_intelligence(circuit_map_ci[chosen_circuit_ci], current_year)
+            if intel is None:
+                st.info("📻 Not enough historical data found for this circuit.")
+            else:
+                ic1, ic2, ic3 = st.columns(3)
+                with ic1:
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #ef4444;"><h3>💥 DNF Rate</h3><h2>{intel["dnf_rate"]}%</h2><small>across {intel["races_analyzed"]} season(s)</small></div>', unsafe_allow_html=True)
+                with ic2:
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #f5d142;"><h3>🔀 Shake-Up Index</h3><h2>{intel["shake_up_index"]}</h2><small>avg |grid-finish| change</small></div>', unsafe_allow_html=True)
+                with ic3:
+                    pole_txt = f'{intel["pole_to_win_rate"]}%' if intel["pole_to_win_rate"] is not None else "N/A"
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #38bdf8;"><h3>🥇 Pole→Win Rate</h3><h2>{pole_txt}</h2><small>how often pole sitter wins here</small></div>', unsafe_allow_html=True)
+
+                st.markdown("#### 🏆 Most Successful Drivers Here")
+                st.dataframe(intel["top_winners"].reset_index().rename(columns={"index": "Driver", "driver": "Wins"}), use_container_width=True, hide_index=True)
+                st.markdown("#### 🛠️ Most Successful Constructors Here")
+                st.dataframe(intel["top_constructors"].reset_index().rename(columns={"index": "Team", "constructor": "Wins"}), use_container_width=True, hide_index=True)
+
+# ====================== TEAM PERFORMANCE ANALYZER ======================
+with tabs[12]:
+    st.subheader("🛠️ Team Performance Analyzer")
+    st.caption("Cumulative constructor points across the season, race by race — see momentum shifts, not just a static final table.")
+
+    if st.button("🛠️ Load Season Trend", type="primary", use_container_width=True, key="team_analyzer_btn"):
+        with st.spinner("Building the season trend..."):
+            trend_df = get_constructor_season_trend(current_year)
+        if trend_df.empty:
+            st.info("No completed races yet this season to chart.")
+        else:
+            pivot_df = trend_df.pivot(index="Round", columns="Team", values="Cumulative Points").ffill()
+            st.line_chart(pivot_df, use_container_width=True)
+
+            st.markdown("#### Compare Two Teams Directly")
+            teams_in_trend = sorted(trend_df['Team'].unique())
+            tcol1, tcol2 = st.columns(2)
+            with tcol1:
+                team_a = st.selectbox("Team A", teams_in_trend, index=0, key="ta_select")
+            with tcol2:
+                team_b = st.selectbox("Team B", teams_in_trend, index=1 if len(teams_in_trend) > 1 else 0, key="tb_select")
+
+            sub_df = pivot_df[[c for c in [team_a, team_b] if c in pivot_df.columns]]
+            st.line_chart(sub_df, use_container_width=True)
 
 st.caption("F1 Pit Wall Hub • Completely Free • Powered by Public APIs (Jolpi/Ergast + OpenF1) • No API Keys Required")
