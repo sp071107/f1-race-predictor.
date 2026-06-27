@@ -2,65 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import json
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder
 
 st.set_page_config(page_title="F1 Pit Wall Hub", page_icon="🏎️", layout="wide")
-
-# ====================== PRE-RACE PREDICTION LOG (GitHub Gist — genuinely free, permanent forever) ======================
-# WHY A GIST INSTEAD OF A LOCAL FILE: a local JSON file does NOT survive a Streamlit Cloud
-# redeploy (the container resets on every git push). A GitHub Gist costs nothing, never expires,
-# never pauses for inactivity (unlike most free database tiers), and is the same account you're
-# already deploying from. ONE-TIME SETUP REQUIRED (free, ~2 minutes):
-#   1. Create a free GitHub Personal Access Token with the "gist" scope:
-#      https://github.com/settings/tokens -> Generate new token (classic) -> check "gist" only.
-#   2. Create an empty secret Gist (https://gist.github.com) with one file named prediction_log.json
-#      containing: {}
-#   3. In Streamlit Cloud -> App settings -> Secrets, add:
-#      GIST_TOKEN = "ghp_yourtokenhere"
-#      GIST_ID = "your_gist_id_from_the_url"
-# Until these secrets are set, the log gracefully runs in-memory for the current session only
-# (clearly flagged in the UI) rather than crashing the app.
-GIST_API_BASE = "https://api.github.com/gists"
-
-def _gist_configured():
-    try:
-        return bool(st.secrets.get("GIST_TOKEN")) and bool(st.secrets.get("GIST_ID"))
-    except Exception:
-        return False
-
-@st.cache_data(ttl=60)
-def load_prediction_log():
-    if not _gist_configured():
-        return st.session_state.get("_local_prediction_log", {})
-    try:
-        token = st.secrets["GIST_TOKEN"]
-        gist_id = st.secrets["GIST_ID"]
-        resp = requests.get(f"{GIST_API_BASE}/{gist_id}", headers={"Authorization": f"token {token}"}, timeout=8)
-        if resp.status_code == 200:
-            files = resp.json().get("files", {})
-            content = files.get("prediction_log.json", {}).get("content", "{}")
-            return json.loads(content)
-    except Exception:
-        pass
-    return {}
-
-def save_prediction_log(log):
-    if not _gist_configured():
-        st.session_state["_local_prediction_log"] = log
-        return "local"
-    try:
-        token = st.secrets["GIST_TOKEN"]
-        gist_id = st.secrets["GIST_ID"]
-        payload = {"files": {"prediction_log.json": {"content": json.dumps(log, indent=2)}}}
-        resp = requests.patch(f"{GIST_API_BASE}/{gist_id}", headers={"Authorization": f"token {token}"}, json=payload, timeout=8)
-        if resp.status_code == 200:
-            st.cache_data.clear()
-            return "github"
-    except Exception:
-        pass
-    return False
 
 # ====================== TEAM COLOURS + LOGO MAPPING (100% FREE, NO API KEYS) ======================
 # Colours are official-ish team hex codes. Logos are free public flag-style SVG badges
@@ -1076,8 +1021,8 @@ with tabs[1]:
     st.markdown("### 📅 Full Season Calendar")
     render_data_table(calendar_df.to_dict("records"))
 
-    predict_tab, whatif_tab, strategy_tab, season_tab, backtest_tab, tracker_tab = st.tabs(
-        ["🎯 PREDICT NEXT RACE", "🧪 WHAT-IF SANDBOX", "📋 STRATEGY SIMULATOR", "🏆 SEASON SIMULATOR", "🕰️ PREDICTION VS REALITY", "🎯 ACCURACY TRACKER"]
+    predict_tab, whatif_tab, strategy_tab, season_tab, backtest_tab = st.tabs(
+        ["🎯 PREDICT NEXT RACE", "🧪 WHAT-IF SANDBOX", "📋 STRATEGY SIMULATOR", "🏆 SEASON SIMULATOR", "🕰️ PREDICTION VS REALITY"]
     )
 
     # ============== SUB-TAB 1: PREDICT NEXT RACE ==============
@@ -1158,56 +1103,8 @@ with tabs[1]:
                             - The race is simulated **{n_sims:,} times**; the percentages above are how often each driver landed in that position across all simulated races.
                             """)
 
-                        st.markdown("---")
-                        st.markdown("### 🔒 Public Prediction Log")
-                        if _gist_configured():
-                            st.caption("Lock this prediction in before the race happens. Once locked, it's frozen, timestamped, and saved permanently to a public GitHub Gist — the Prediction vs Reality tab will use this exact snapshot afterward instead of a re-simulated, lookahead-biased guess. This is what makes the model's track record actually checkable.")
-                        else:
-                            st.warning("⚠️ GitHub Gist storage isn't configured yet (GIST_TOKEN/GIST_ID secrets missing) — locked predictions will only persist for this browser session, not permanently. See the code comments at the top of app.py for the free 2-minute setup.")
-
-                        log = load_prediction_log()
-                        log_key = f"{current_year}-{next_race['round']}"
-
-                        if log_key in log:
-                            locked_at = log[log_key].get("logged_at", "unknown time")
-                            st.info(f"✅ Already locked for **{next_race['name']}** at {locked_at}. Predictions are frozen for this race — re-running the simulation above won't change the logged entry.")
-                        else:
-                            if st.button("🔒 Lock In This Prediction", use_container_width=True, key="lock_prediction_btn"):
-                                log[log_key] = {
-                                    "race_name": next_race['name'],
-                                    "year": current_year,
-                                    "round": next_race['round'],
-                                    "circuit": next_race['circuit'],
-                                    "weather": weather,
-                                    "track_temp": track_temp,
-                                    "n_sims": n_sims,
-                                    "logged_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-                                    "predictions": sim_df.to_dict("records")
-                                }
-                                save_result = save_prediction_log(log)
-                                if save_result == "github":
-                                    st.success(f"🔒 Locked in for **{next_race['name']}** — saved permanently to GitHub.")
-                                    st.rerun()
-                                elif save_result == "local":
-                                    st.warning(f"🔒 Locked in for **{next_race['name']}** for this session only — set up GIST_TOKEN/GIST_ID secrets for permanent storage.")
-                                    st.rerun()
-                                else:
-                                    st.error("Couldn't write the prediction log — check the GitHub token/Gist ID in Streamlit secrets.")
-
                 except Exception as e:
                     st.error(f"Simulation error: {str(e)}")
-
-        full_log = load_prediction_log()
-        if full_log:
-            with st.expander(f"📜 View All Locked Predictions ({len(full_log)} race(s) logged)"):
-                log_rows = [{
-                    "Race": v.get("race_name", "Unknown"),
-                    "Round": v.get("round", "?"),
-                    "Locked At": v.get("logged_at", "?"),
-                    "Top Pick": v["predictions"][0]["Driver"] if v.get("predictions") else "?",
-                    "Win %": v["predictions"][0]["Win %"] if v.get("predictions") else "?"
-                } for v in sorted(full_log.values(), key=lambda x: (x.get("year", 0), int(x.get("round", 0)) if str(x.get("round", "0")).isdigit() else 0))]
-                render_data_table(log_rows)
 
     # ============== SUB-TAB: WHAT-IF SANDBOX ==============
     with whatif_tab:
@@ -1445,10 +1342,10 @@ with tabs[1]:
 
     # ============== SUB-TAB 3: PREDICTION VS REALITY ==============
     with backtest_tab:
-        st.caption("Checks the model's pre-race predictions against what actually happened. If a prediction was locked in beforehand (left tab), this uses that exact frozen snapshot — a true blind forecast, no lookahead bias. Otherwise it falls back to re-simulating with today's rolling form, clearly flagged as a sanity-check rather than a strict logged forecast.")
+        st.caption("A retrospective check: rerun the simulation for the most recently completed race using its actual qualifying grid, then compare against what really happened. This uses today's rolling-form numbers rather than a frozen pre-race snapshot, so treat it as a sanity-check on the model, not a strict logged forecast history.")
 
         if st.button("🕰️ Backtest Most Recent Race", type="primary", use_container_width=True, key="backtest_btn"):
-            with st.spinner("Pulling the last completed race and checking the prediction..."):
+            with st.spinner("Pulling the last completed race and rerunning the simulation..."):
                 try:
                     races = get_recent_results(current_year)
                     completed = [r for r in races if r.get('Results')]
@@ -1458,8 +1355,6 @@ with tabs[1]:
                         last_race = completed[-1]
                         round_num = int(last_race['round'])
                         circuit_id = last_race['Circuit']['circuitId']
-                        log_key = f"{current_year}-{round_num}"
-                        pred_log = load_prediction_log()
 
                         actual_top3 = [{
                             "Pos": int(res['position']),
@@ -1467,32 +1362,21 @@ with tabs[1]:
                             "Team": res['Constructor']['name']
                         } for res in last_race['Results'][:3]]
 
-                        if log_key in pred_log:
-                            sim_df = pd.DataFrame(pred_log[log_key]["predictions"])
-                            is_frozen = True
-                            logged_at = pred_log[log_key].get("logged_at", "unknown time")
-                        else:
-                            model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
-                            grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
-                            drivers_meta, anchor_scores = build_drivers_meta(
-                                grid_list, current_year, round_num, circuit_id, "Dry", 38,
-                                model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
-                            )
-                            sim_df = None
-                            is_frozen = False
-                            logged_at = None
-                            if drivers_meta:
-                                sc_p = sc_proxy.get(circuit_id, 0.20)
-                                sim_df = run_monte_carlo(drivers_meta, anchor_scores, sc_p, "Dry", 5000)
+                        model, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
+                        grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
+                        drivers_meta, anchor_scores = build_drivers_meta(
+                            grid_list, current_year, round_num, circuit_id, "Dry", 38,
+                            model, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                        )
+                        sim_df = None
+                        if drivers_meta:
+                            sc_p = sc_proxy.get(circuit_id, 0.20)
+                            sim_df = run_monte_carlo(drivers_meta, anchor_scores, sc_p, "Dry", 5000)
 
                         if sim_df is None or sim_df.empty:
                             st.warning("Couldn't rebuild the grid for this race to backtest.")
                         else:
                             st.success(f"🕰️ Prediction vs Reality — **{last_race['raceName']}**")
-                            if is_frozen:
-                                st.markdown(f'<span style="color:#22c55e; font-weight:700;">✅ Using a FROZEN pre-race prediction, locked on {logged_at} — no lookahead bias.</span>', unsafe_allow_html=True)
-                            else:
-                                st.caption("⚠️ No frozen prediction was logged for this race ahead of time — this is a re-simulation using today's rolling form, so treat it as a sanity-check, not a strict forecast record.")
 
                             real_col, pred_col = st.columns(2)
                             with real_col:
@@ -1537,7 +1421,6 @@ with tabs[1]:
                         st.info("Not enough completed races yet this season to run a meaningful baseline comparison.")
                     else:
                         recent_races = completed[-n_baseline_races:]
-                        pred_log = load_prediction_log()
                         model_obj, le_c, le_d, le_const, dnf_rates, pos_std, sc_proxy = train_model_and_risk_profile(current_year)
 
                         rows = []
@@ -1552,23 +1435,17 @@ with tabs[1]:
                                     pole_sitter = f"{res['Driver']['givenName']} {res['Driver']['familyName']}"
                                     break
 
-                            log_key = f"{current_year}-{round_num}"
-                            if log_key in pred_log:
-                                model_pick = pred_log[log_key]["predictions"][0]["Driver"]
-                                source = "frozen"
+                            grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
+                            d_meta, a_scores = build_drivers_meta(
+                                grid_list, current_year, round_num, circuit_id, "Dry", 38,
+                                model_obj, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
+                            )
+                            if d_meta:
+                                sc_p_r = sc_proxy.get(circuit_id, 0.20)
+                                quick_sim = run_monte_carlo(d_meta, a_scores, sc_p_r, "Dry", 1500)
+                                model_pick = quick_sim.iloc[0]['Driver']
                             else:
-                                grid_list = fetch_grid_for_round(current_year, round_num, standings_df)
-                                d_meta, a_scores = build_drivers_meta(
-                                    grid_list, current_year, round_num, circuit_id, "Dry", 38,
-                                    model_obj, le_c, le_d, le_const, dnf_rates, pos_std, constructor_bias, driver_bias
-                                )
-                                if d_meta:
-                                    sc_p_r = sc_proxy.get(circuit_id, 0.20)
-                                    quick_sim = run_monte_carlo(d_meta, a_scores, sc_p_r, "Dry", 1500)
-                                    model_pick = quick_sim.iloc[0]['Driver']
-                                else:
-                                    model_pick = None
-                                source = "re-simulated"
+                                model_pick = None
 
                             rows.append({
                                 "Race": race['raceName'],
@@ -1576,8 +1453,7 @@ with tabs[1]:
                                 "Model Pick": model_pick or "N/A",
                                 "Model Hit": "✅" if model_pick == actual_winner else "❌",
                                 "Pole Sitter": pole_sitter or "N/A",
-                                "Pole Hit": "✅" if pole_sitter == actual_winner else "❌",
-                                "Source": source
+                                "Pole Hit": "✅" if pole_sitter == actual_winner else "❌"
                             })
 
                         results_df = pd.DataFrame(rows)
@@ -1599,56 +1475,9 @@ with tabs[1]:
                             st.warning(f"The model underperformed the naive pole-position baseline by {pole_hit_rate - model_hit_rate:.0f} percentage points over this window. Small sample sizes can swing this a lot — worth re-checking after more races.")
 
                         render_data_table(results_df.to_dict("records"))
-                        st.caption("'Re-simulated' rows didn't have a frozen pre-race log entry, so they use today's rolling form — a small lookahead-bias caveat worth knowing. Lock in predictions before future races to make this comparison fully rigorous over time.")
+                        st.caption("These picks are re-simulated using today's rolling form rather than a frozen pre-race snapshot — a small lookahead-bias caveat worth knowing when reading the hit rate above.")
                 except Exception as e:
                     st.error(f"Baseline comparison error: {str(e)}")
-
-    # ============== SUB-TAB: ACCURACY TRACKER ==============
-    with tracker_tab:
-        st.caption("The cumulative, persistent record: every prediction you've locked in (left tabs), checked against real results once each race finishes. This is the running track record — not a one-off spot check.")
-
-        if st.button("🔄 Refresh Tracker", use_container_width=True, key="tracker_refresh_btn"):
-            st.cache_data.clear()
-            st.rerun()
-
-        try:
-            tracker_log = load_prediction_log()
-            if not tracker_log:
-                st.info("No predictions have been locked in yet. Head to 'Predict Next Race' and lock one in before a race weekend to start building a track record.")
-            else:
-                races_with_results = get_recent_results(current_year)
-                results_by_round = {int(r['round']): r for r in races_with_results if r.get('Results')}
-
-                tracked_rows = []
-                for key, entry in tracker_log.items():
-                    round_num = int(entry.get("round", 0)) if str(entry.get("round", "")).isdigit() else None
-                    if round_num is None or round_num not in results_by_round:
-                        tracked_rows.append({
-                            "Race": entry.get("race_name", "Unknown"), "Locked At": entry.get("logged_at", "?"),
-                            "Top Pick": entry["predictions"][0]["Driver"] if entry.get("predictions") else "?",
-                            "Status": "⏳ Race not completed yet", "Hit": None
-                        })
-                        continue
-                    actual_winner = f"{results_by_round[round_num]['Results'][0]['Driver']['givenName']} {results_by_round[round_num]['Results'][0]['Driver']['familyName']}"
-                    model_pick = entry["predictions"][0]["Driver"] if entry.get("predictions") else None
-                    hit = model_pick == actual_winner
-                    tracked_rows.append({
-                        "Race": entry.get("race_name", "Unknown"), "Locked At": entry.get("logged_at", "?"),
-                        "Top Pick": model_pick or "?", "Actual Winner": actual_winner,
-                        "Status": "✅ Hit" if hit else "❌ Miss", "Hit": hit
-                    })
-
-                completed_rows = [r for r in tracked_rows if r["Hit"] is not None]
-                if completed_rows:
-                    hit_rate = sum(1 for r in completed_rows if r["Hit"]) * 100 / len(completed_rows)
-                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #22c55e;"><h3>🎯 Cumulative Win-Pick Accuracy</h3><h2>{hit_rate:.0f}%</h2><small>across {len(completed_rows)} locked-and-completed race(s)</small></div>', unsafe_allow_html=True)
-                else:
-                    st.info("Predictions are locked in but no tracked races have completed yet — check back after the next race weekend.")
-
-                st.markdown("#### Full Tracking Log")
-                render_data_table([{k: v for k, v in row.items() if k != "Hit"} for row in tracked_rows])
-        except Exception as e:
-            st.error(f"Accuracy tracker error: {str(e)}")
 
 # ====================== DRIVER STAT CARDS ======================
 with tabs[2]:
