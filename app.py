@@ -311,7 +311,12 @@ def get_next_race(year):
     """Tries the current season's calendar first. If the free API hasn't loaded this
     season yet (common for a brand-new year), falls back to the real final race of last
     season instead of a fabricated placeholder. Returns None only if everything fails,
-    so the UI can show an honest 'unavailable' message instead of fake-looking data."""
+    so the UI can show an honest 'unavailable' message instead of fake-looking data.
+
+    IMPORTANT: a race is treated as 'in the past' if it actually has results posted,
+    not just if its date is <= today. A pure date comparison breaks on race day itself —
+    the race finishes hours before midnight, but a date-only check would keep showing it
+    as 'next' until the calendar date rolls over."""
     try:
         url = f"https://api.jolpi.ca/ergast/f1/{year}.json"
         resp = requests.get(url, timeout=10)
@@ -319,8 +324,13 @@ def get_next_race(year):
             races = resp.json()['MRData']['RaceTable']['Races']
             if races:
                 today = datetime.utcnow().date().isoformat()
+                completed_results = get_recent_results(year)
+                completed_rounds = {int(r['round']) for r in completed_results if r.get('Results')}
+
                 for race in races:
-                    if race.get('date', '') >= today:
+                    round_num = int(race['round'])
+                    already_run = round_num in completed_rounds
+                    if not already_run and race.get('date', '') >= today:
                         return {
                             "name": race['raceName'], "round": race['round'], "date": race['date'],
                             "circuit": race['Circuit']['circuitId'],
