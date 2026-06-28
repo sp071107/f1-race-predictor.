@@ -805,7 +805,71 @@ def generate_race_debrief(sim_df, drivers_meta, constructor_bias, driver_bias, s
     return " ".join(sentences)
 
 
-# ====================== CIRCUIT INTELLIGENCE (pure compute on existing free data) ======================
+# ====================== LAST RACE RECAP ANALYSIS (pure compute on data already in the results payload) ======================
+def analyze_last_race(race):
+    """Builds a structured analysis of one completed race: podium, biggest mover/faller,
+    DNFs, and whether pole position converted to a win. All derived from the same Results
+    payload already fetched elsewhere in this app — no extra API calls."""
+    results = race.get('Results', [])
+    if not results:
+        return None
+
+    rows = []
+    for res in results:
+        try:
+            grid = int(res.get('grid', 0))
+            finish = int(res.get('positionOrder', res.get('position', 99)))
+        except Exception:
+            grid, finish = 0, 99
+        rows.append({
+            "Pos": res.get('position', '?'),
+            "Driver": f"{res['Driver']['givenName']} {res['Driver']['familyName']}",
+            "Team": res['Constructor']['name'],
+            "Grid": grid,
+            "Points": res.get('points', 0),
+            "Status": res.get('status', ''),
+            "Delta": grid - finish if grid > 0 else 0
+        })
+
+    df = pd.DataFrame(rows)
+    podium = df.head(3).to_dict("records")
+    dnf_rows = df[~df['Status'].str.contains("Finished", case=False, na=False) & ~df['Status'].str.contains(r'^\+', regex=True, na=False)]
+
+    biggest_mover = df.loc[df['Delta'].idxmax()] if not df.empty else None
+    biggest_faller = df.loc[df['Delta'].idxmin()] if not df.empty else None
+    pole_sitter = df[df['Grid'] == 1]
+    pole_converted = (not pole_sitter.empty) and (pole_sitter.iloc[0]['Pos'] == '1')
+
+    sentences = []
+    if podium:
+        sentences.append(f"**{podium[0]['Driver']}** ({podium[0]['Team']}) took victory at {race['raceName']}.")
+    if pole_sitter.empty:
+        pass
+    elif pole_converted:
+        sentences.append(f"Pole position converted to the win — **{pole_sitter.iloc[0]['Driver']}** led from the front.")
+    else:
+        sentences.append(f"Pole position did **not** convert — **{pole_sitter.iloc[0]['Driver']}** started P1 but finished {pole_sitter.iloc[0]['Pos']}.")
+    if biggest_mover is not None and biggest_mover['Delta'] > 0:
+        sentences.append(f"**{biggest_mover['Driver']}** was the biggest mover, gaining {int(biggest_mover['Delta'])} position(s) from P{int(biggest_mover['Grid'])} to {biggest_mover['Pos']}.")
+    if biggest_faller is not None and biggest_faller['Delta'] < 0:
+        sentences.append(f"**{biggest_faller['Driver']}** had the toughest day, losing {abs(int(biggest_faller['Delta']))} position(s) from P{int(biggest_faller['Grid'])} to {biggest_faller['Pos']}.")
+    if not dnf_rows.empty:
+        dnf_names = ", ".join(dnf_rows['Driver'].tolist())
+        sentences.append(f"{len(dnf_rows)} driver(s) failed to finish: {dnf_names}.")
+    else:
+        sentences.append("Every car that started saw the chequered flag — a clean race with no retirements.")
+
+    return {
+        "results_df": df,
+        "podium": podium,
+        "dnf_count": len(dnf_rows),
+        "biggest_mover": biggest_mover,
+        "biggest_faller": biggest_faller,
+        "pole_converted": pole_converted,
+        "analysis_text": " ".join(sentences)
+    }
+
+
 @st.cache_data(ttl=3600)
 def get_circuit_intelligence(circuit_id, year_cutoff):
     """Builds a profile for one circuit from real historical results already used elsewhere
@@ -1010,6 +1074,52 @@ with tabs[0]:
         st.metric("Drivers Tracked", len(standings_df))
     with m4:
         st.metric("Teams Tracked", len(cons_df))
+
+    st.markdown("---")
+    st.markdown("### 🏁 Last Race Recap")
+    try:
+        races_recap = get_recent_results(current_year)
+        completed_recap = [r for r in races_recap if r.get('Results')]
+        if not completed_recap:
+            st.info("No completed races yet this season to recap.")
+        else:
+            last_race_recap = completed_recap[-1]
+            recap = analyze_last_race(last_race_recap)
+            if recap is None:
+                st.info("Results for the last race aren't available yet.")
+            else:
+                st.markdown(f"#### {last_race_recap['raceName']} (Round {last_race_recap['round']})")
+
+                podium_cols = st.columns(3)
+                for i, p in enumerate(recap['podium']):
+                    with podium_cols[i]:
+                        pmeta = team_meta(p['Team'])
+                        st.markdown(f"""
+                        <div class="podium-card" style="text-align:center; padding:16px; background:#1a1e2a; border-radius:12px; border:2px solid {pmeta['color']};">
+                            <h3>{["🥇","🥈","🥉"][i]} P{i+1}</h3>
+                            <h4>{pmeta['emoji']} {p['Driver']}</h4>
+                            <p style="color:{pmeta['color']};">{p['Team']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                st.markdown("##### 📝 Race Analysis")
+                st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #38bdf8;">{recap["analysis_text"]}</div>', unsafe_allow_html=True)
+                st.caption("Auto-generated from the official results data via rule-based templates — not a paid AI/LLM call, so this stays free forever.")
+
+                rc1, rc2, rc3 = st.columns(3)
+                with rc1:
+                    st.markdown(f'<div class="metric-card"><h3>💥 DNFs</h3><h2>{recap["dnf_count"]}</h2></div>', unsafe_allow_html=True)
+                with rc2:
+                    mover = recap['biggest_mover']
+                    mover_txt = f"{mover['Driver']} (+{int(mover['Delta'])})" if mover is not None and mover['Delta'] > 0 else "—"
+                    st.markdown(f'<div class="metric-card"><h3>📈 Biggest Mover</h3><h2 style="font-size:1.2rem;">{mover_txt}</h2></div>', unsafe_allow_html=True)
+                with rc3:
+                    st.markdown(f'<div class="metric-card"><h3>🥇 Pole Converted?</h3><h2>{"✅ Yes" if recap["pole_converted"] else "❌ No"}</h2></div>', unsafe_allow_html=True)
+
+                with st.expander("📋 Full Results"):
+                    render_data_table(recap['results_df'][['Pos', 'Driver', 'Team', 'Grid', 'Points', 'Status']].to_dict("records"), team_col="Team")
+    except Exception as e:
+        st.error(f"Race recap error: {str(e)}")
 
 # ====================== PODIUM PREDICTOR ======================
 with tabs[1]:
