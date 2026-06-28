@@ -405,14 +405,48 @@ def get_remaining_rounds(year, from_round):
 
 @st.cache_data(ttl=600)
 def get_recent_results(year):
+    """Paginates through the season's results explicitly rather than trusting a single
+    limit=1000 call. Some free Ergast mirrors silently cap results per request below
+    whatever limit is requested — without pagination, later rounds can go missing from
+    the response without any error being raised. This loops until the API reports no
+    more rows left, merging any race whose results got split across a page boundary."""
+    races_by_round = {}
+    offset = 0
+    page_size = 100
     try:
-        url = f"https://api.jolpi.ca/ergast/f1/{year}/results.json?limit=1000"
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            return resp.json()['MRData']['RaceTable']['Races']
+        while True:
+            url = f"https://api.jolpi.ca/ergast/f1/{year}/results.json?limit={page_size}&offset={offset}"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get('MRData', {})
+            races_page = data.get('RaceTable', {}).get('Races', [])
+            if not races_page:
+                break
+
+            for race in races_page:
+                round_key = race['round']
+                if round_key in races_by_round:
+                    races_by_round[round_key]['Results'].extend(race.get('Results', []))
+                else:
+                    races_by_round[round_key] = race
+
+            rows_received = sum(len(race.get('Results', [])) for race in races_page)
+
+            try:
+                total = int(data.get('total', 0))
+            except Exception:
+                total = 0
+
+            offset += rows_received if rows_received > 0 else page_size
+            if (total and offset >= total) or rows_received == 0:
+                break
+            if offset > 2000:  # season-length safety cap, no F1 season is remotely this large
+                break
     except Exception:
         pass
-    return []
+
+    return sorted(races_by_round.values(), key=lambda r: int(r['round']))
 
 @st.cache_data(ttl=86400)
 def get_all_drivers_index():
