@@ -249,8 +249,7 @@ st.markdown("""
 
 # ====================== DATA FETCHERS (ALL FREE / NO API KEY) ======================
 # Jolpi (jolpi.ca) is a free, no-key drop-in replacement for the old Ergast F1 API.
-# OpenF1 (openf1.org) is also a free, no-key live F1 telemetry API.
-# Both are used here purely via plain HTTPS GET requests with no paid tier required.
+# Used here purely via plain HTTPS GET requests with no paid tier required.
 
 @st.cache_data(ttl=600)
 def get_current_standings(year):
@@ -972,8 +971,130 @@ def get_constructor_season_trend(year):
     return pd.DataFrame(rows)
 
 
-# ====================== FANTASY F1 ASSISTANT ======================
-# IMPORTANT HONESTY NOTE: official F1 Fantasy pricing isn't available via any free API, so this
+# ====================== COMPLETED RACE ANALYSIS ENGINE ======================
+# Both endpoints below return many rows (laps.json especially: drivers x laps can be 1000+),
+# so both use the same explicit-pagination pattern proven necessary for get_recent_results —
+# trusting a single limit=N call risks silently truncated data on a free API mirror.
+
+@st.cache_data(ttl=3600)
+def get_race_laps(year, round_num):
+    """Lap-by-lap running position for every driver in one race — the data needed to chart
+    how the race actually unfolded, not just the final classification."""
+    rows = []
+    offset = 0
+    page_size = 200
+    try:
+        while True:
+            url = f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/laps.json?limit={page_size}&offset={offset}"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get('MRData', {})
+            races = data.get('RaceTable', {}).get('Races', [])
+            laps_page = races[0].get('Laps', []) if races else []
+            if not laps_page:
+                break
+            for lap in laps_page:
+                lap_num = int(lap['number'])
+                for timing in lap.get('Timings', []):
+                    rows.append({"Lap": lap_num, "DriverId": timing['driverId'], "Position": int(timing['position'])})
+            try:
+                total = int(data.get('total', 0))
+            except Exception:
+                total = 0
+            rows_received = sum(len(lap.get('Timings', [])) for lap in laps_page)
+            offset += rows_received if rows_received > 0 else page_size
+            if (total and offset >= total) or rows_received == 0:
+                break
+            if offset > 5000:
+                break
+    except Exception:
+        pass
+    return pd.DataFrame(rows)
+
+@st.cache_data(ttl=3600)
+def get_race_pitstops(year, round_num):
+    """Every pit stop in one race: driver, lap, stop number, duration — the raw data
+    needed to reconstruct each driver's actual strategy."""
+    rows = []
+    offset = 0
+    page_size = 100
+    try:
+        while True:
+            url = f"https://api.jolpi.ca/ergast/f1/{year}/{round_num}/pitstops.json?limit={page_size}&offset={offset}"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get('MRData', {})
+            races = data.get('RaceTable', {}).get('Races', [])
+            stops_page = races[0].get('PitStops', []) if races else []
+            if not stops_page:
+                break
+            for stop in stops_page:
+                rows.append({
+                    "DriverId": stop['driverId'], "Stop": int(stop['stop']), "Lap": int(stop['lap']),
+                    "Duration": stop.get('duration', '?')
+                })
+            try:
+                total = int(data.get('total', 0))
+            except Exception:
+                total = 0
+            offset += len(stops_page) if stops_page else page_size
+            if (total and offset >= total) or not stops_page:
+                break
+            if offset > 2000:
+                break
+    except Exception:
+        pass
+    return pd.DataFrame(rows)
+
+def build_winner_strategy_narrative(results_df, laps_df, pitstops_df, winner_id, winner_name, runner_up_id, runner_up_name):
+    """The core 'how did the winner actually win' story: when they took the lead, how many
+    stops they made vs their closest rival, and whether their strategy was an undercut,
+    overcut, pure pace, or a head start that was simply never lost."""
+    sentences = []
+
+    winner_laps = laps_df[laps_df['DriverId'] == winner_id].sort_values('Lap') if not laps_df.empty else pd.DataFrame()
+    if not winner_laps.empty:
+        started_p1 = winner_laps.iloc[0]['Position'] == 1
+        lead_laps_df = winner_laps[winner_laps['Position'] == 1]
+        if not lead_laps_df.empty:
+            first_lead_lap = int(lead_laps_df.iloc[0]['Lap'])
+            total_laps = int(winner_laps['Lap'].max())
+            lead_lap_count = len(lead_laps_df)
+            if started_p1:
+                sentences.append(f"**{winner_name}** led from lap 1 and was never seriously challenged for the position — {lead_lap_count} of {total_laps} laps spent in P1.")
+            else:
+                sentences.append(f"**{winner_name}** did not start in the lead, but took P1 on lap {first_lead_lap} and held it for {lead_lap_count} of the race's {total_laps} laps.")
+        else:
+            sentences.append(f"**{winner_name}** won without ever showing as P1 in the lap-by-lap data available — likely a very late, last-lap pass or a timing-data gap on the free feed.")
+
+    winner_stops = pitstops_df[pitstops_df['DriverId'] == winner_id].sort_values('Lap') if not pitstops_df.empty else pd.DataFrame()
+    rival_stops = pitstops_df[pitstops_df['DriverId'] == runner_up_id].sort_values('Lap') if not pitstops_df.empty else pd.DataFrame()
+
+    if not winner_stops.empty:
+        stop_laps = ", ".join(str(int(l)) for l in winner_stops['Lap'].tolist())
+        sentences.append(f"{winner_name} made {len(winner_stops)} pit stop(s), on lap(s) {stop_laps}.")
+    else:
+        sentences.append(f"No pit stop data was available for {winner_name} on the free feed — possibly a no-stop race or a data gap.")
+
+    if not winner_stops.empty and not rival_stops.empty and runner_up_name:
+        w_first_stop = winner_stops.iloc[0]['Lap']
+        r_first_stop = rival_stops.iloc[0]['Lap']
+        if w_first_stop < r_first_stop:
+            sentences.append(f"{winner_name} pitted earlier than {runner_up_name} ({int(w_first_stop)} vs {int(r_first_stop)}) — consistent with an undercut attempt gaining track position.")
+        elif w_first_stop > r_first_stop:
+            sentences.append(f"{winner_name} pitted later than {runner_up_name} ({int(w_first_stop)} vs {int(r_first_stop)}) — consistent with an overcut, staying out longer on a still-competitive tyre.")
+        else:
+            sentences.append(f"{winner_name} and {runner_up_name} pitted on the same lap ({int(w_first_stop)}) — the result here came down to pure pace and execution, not a strategic stop-timing gap.")
+        if len(winner_stops) < len(rival_stops):
+            sentences.append(f"{winner_name} also ran one fewer stop than {runner_up_name} — track position held was likely worth more than fresher tyres in this race.")
+        elif len(winner_stops) > len(rival_stops):
+            sentences.append(f"{winner_name} ran more stops than {runner_up_name} but still came out ahead — a sign of a genuine pace advantage overcoming the extra time lost in the pits.")
+
+    return " ".join(sentences)
+
+
 # builds a SYNTHETIC budget (scaled from real season points/PWR) rather than pretending to mirror
 # the official game's real prices. Clearly disclosed in the UI — this is a fan-built optimizer,
 # not an official F1 Fantasy companion.
@@ -1066,7 +1187,7 @@ if next_race is None:
                  "circuit": "unknown", "circuit_name": "Unavailable", "location": "—",
                  "is_current": False, "season_complete": None}
 
-tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "📡 LIVE SESSION", "🎮 FANTASY ASSISTANT", "🥊 RIVAL TEAM MODE", "🏟️ CIRCUIT INTELLIGENCE", "🛠️ TEAM ANALYZER"])
+tabs = st.tabs(["🏠 HOME", "🏆 PODIUM PREDICTOR", "🪪 DRIVER CARDS", "⚔️ DRIVER COMPARISON", "📜 HISTORY", "🎙️ RACE ENGINEER", "📈 STANDINGS", "📚 STATS VAULT", "🔬 RACE ANALYSIS", "🎮 FANTASY ASSISTANT", "🥊 RIVAL TEAM MODE", "🏟️ CIRCUIT INTELLIGENCE", "🛠️ TEAM ANALYZER"])
 
 # ====================== HOME ======================
 with tabs[0]:
@@ -2140,109 +2261,89 @@ with tabs[7]:
                         avg_pts = total_career_points / seasons_active if seasons_active else 0
                         st.markdown(f'<div class="pitwall-card" style="border-left:4px solid #a855f7;"><h3>📊 Avg Points/Season</h3><h2>{avg_pts:.1f}</h2><small>{vault_traj_driver}</small></div>', unsafe_allow_html=True)
 
-# ====================== LIVE SESSION (NEW: OpenF1 live telemetry — free, no key) ======================
+# ====================== COMPLETED RACE ANALYSIS ======================
 with tabs[8]:
-    st.subheader("📡 Live Session Feed")
-    st.caption("Powered by OpenF1 — a free, no-key live F1 telemetry API. This tab activates around real practice/qualifying/race sessions; outside of those windows it shows the most recent completed session.")
+    st.subheader("🔬 Completed Race Analysis")
+    st.caption("A detailed breakdown of how a finished race actually played out — when the winner took the lead, how their pit strategy compared to their closest rival, and the full lap-by-lap position chart. Built from real lap timing and pit stop data (free, via the same Ergast feed used elsewhere in this app).")
 
-    OPENF1_BASE = "https://api.openf1.org/v1"
+    races_for_analysis = get_recent_results(current_year)
+    completed_for_analysis = [r for r in races_for_analysis if r.get('Results')]
 
-    @st.cache_data(ttl=30)
-    def openf1_get(endpoint, params=""):
-        try:
-            url = f"{OPENF1_BASE}/{endpoint}?{params}"
-            resp = requests.get(url, timeout=8)
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception:
-            pass
-        return []
-
-    if st.button("🔄 Refresh Live Data", key="live_refresh"):
-        st.cache_data.clear()
-        st.rerun()
-
-    session_data = openf1_get("sessions", "session_key=latest")
-    if not session_data:
-        st.info("📻 No session data available right now — OpenF1 only returns data around real session windows (practice, qualifying, race).")
+    if not completed_for_analysis:
+        st.info("No completed races yet this season to analyze.")
     else:
-        session = session_data[0]
-        session_key = session.get("session_key")
-        st.markdown(
-            f'<div class="pitwall-card" style="border-left:4px solid #FF1801;">'
-            f'<h3>{session.get("session_name", "Session")} — {session.get("circuit_short_name", "")}</h3>'
-            f'<p>{session.get("location", "")}, {session.get("country_name", "")} • {session.get("date_start", "")[:16].replace("T", " ")} UTC</p>'
-            f'</div>', unsafe_allow_html=True
-        )
+        race_options = {f"Round {r['round']} — {r['raceName']}": r for r in completed_for_analysis}
+        chosen_label = st.selectbox("Select a completed race", list(race_options.keys()), index=len(race_options) - 1, key="race_analysis_select")
+        chosen_race = race_options[chosen_label]
+        round_num = int(chosen_race['round'])
 
-        live_tabs = st.tabs(["⏱️ LIVE TIMING", "🛞 TYRE STINTS", "🛠️ PIT STOPS", "📻 TEAM RADIO"])
+        if st.button("🔬 Run Detailed Analysis", type="primary", use_container_width=True, key="race_analysis_btn"):
+            with st.spinner("Pulling lap-by-lap and pit stop data..."):
+                try:
+                    results = chosen_race['Results']
+                    winner = results[0]
+                    runner_up = results[1] if len(results) > 1 else None
+                    winner_id = winner['Driver']['driverId']
+                    winner_name = f"{winner['Driver']['givenName']} {winner['Driver']['familyName']}"
+                    runner_up_id = runner_up['Driver']['driverId'] if runner_up else None
+                    runner_up_name = f"{runner_up['Driver']['givenName']} {runner_up['Driver']['familyName']}" if runner_up else None
 
-        drivers_data = openf1_get("drivers", f"session_key={session_key}")
-        driver_lookup_map = {d.get("driver_number"): d for d in drivers_data} if drivers_data else {}
+                    laps_df = get_race_laps(current_year, round_num)
+                    pitstops_df = get_race_pitstops(current_year, round_num)
 
-        with live_tabs[0]:
-            position_data = openf1_get("position", f"session_key={session_key}")
-            if position_data:
-                latest_by_driver = {}
-                for p in position_data:
-                    latest_by_driver[p["driver_number"]] = p
-                rows = []
-                for num, p in latest_by_driver.items():
-                    meta = driver_lookup_map.get(num, {})
-                    rows.append({
-                        "Pos": p.get("position", 99),
-                        "Driver": meta.get("broadcast_name", f"#{num}"),
-                        "Team": meta.get("team_name", "Unknown")
-                    })
-                rows = sorted(rows, key=lambda r: r["Pos"])
-                render_styled_table(rows, show_wins=False)
-            else:
-                st.info("📻 No live position data right now — check back once a session is running.")
+                    recap = analyze_last_race(chosen_race)
 
-        with live_tabs[1]:
-            stints_data = openf1_get("stints", f"session_key={session_key}")
-            if stints_data:
-                stint_rows = []
-                for s in stints_data[-22:]:
-                    meta = driver_lookup_map.get(s.get("driver_number"), {})
-                    stint_rows.append({
-                        "Driver": meta.get("broadcast_name", f"#{s.get('driver_number')}"),
-                        "Team": meta.get("team_name", "Unknown"),
-                        "Compound": s.get("compound", "Unknown"),
-                        "Stint Lap Range": f"{s.get('lap_start', '?')}–{s.get('lap_end', '?')}",
-                        "Tyre Age at Start": s.get("tyre_age_at_start", "?")
-                    })
-                render_data_table(stint_rows, team_col="Team")
-            else:
-                st.info("📻 No tyre stint data available for this session yet.")
+                    st.success(f"🏁 {chosen_race['raceName']} — Round {round_num}")
 
-        with live_tabs[2]:
-            pit_data = openf1_get("pit", f"session_key={session_key}")
-            if pit_data:
-                pit_rows = []
-                for p in pit_data[-22:]:
-                    meta = driver_lookup_map.get(p.get("driver_number"), {})
-                    pit_rows.append({
-                        "Driver": meta.get("broadcast_name", f"#{p.get('driver_number')}"),
-                        "Team": meta.get("team_name", "Unknown"),
-                        "Lap": p.get("lap_number", "?"),
-                        "Pit Duration (s)": p.get("pit_duration", "?")
-                    })
-                render_data_table(pit_rows, team_col="Team")
-            else:
-                st.info("📻 No pit stop data recorded for this session yet.")
+                    podium_cols = st.columns(3)
+                    for i, p in enumerate(recap['podium']):
+                        with podium_cols[i]:
+                            pmeta = team_meta(p['Team'])
+                            st.markdown(f"""
+                            <div class="podium-card" style="text-align:center; padding:16px; background:#1a1e2a; border-radius:12px; border:2px solid {pmeta['color']};">
+                                <h3>{["🥇","🥈","🥉"][i]} P{i+1}</h3>
+                                <h4>{pmeta['emoji']} {p['Driver']}</h4>
+                                <p style="color:{pmeta['color']};">{p['Team']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
 
-        with live_tabs[3]:
-            radio_data = openf1_get("team_radio", f"session_key={session_key}")
-            if radio_data:
-                for r in radio_data[-10:][::-1]:
-                    meta = driver_lookup_map.get(r.get("driver_number"), {})
-                    audio_url = r.get("recording_url")
-                    st.markdown(f"**{meta.get('broadcast_name', 'Unknown driver')}** — {r.get('date', '')[:16].replace('T',' ')} UTC")
-                    if audio_url:
-                        st.audio(audio_url)
-            else:
-                st.info("📻 No team radio clips available for this session yet.")
+                    st.markdown("### 📝 How the Winner Won")
+                    winner_meta = team_meta(winner['Constructor']['name'])
+                    strategy_narrative = build_winner_strategy_narrative(None, laps_df, pitstops_df, winner_id, winner_name, runner_up_id, runner_up_name)
+                    full_narrative = recap['analysis_text'] + " " + strategy_narrative
+                    st.markdown(f'<div class="pitwall-card" style="border-left:4px solid {winner_meta["color"]};">{full_narrative}</div>', unsafe_allow_html=True)
+                    st.caption("Auto-generated from real lap timing and pit stop data via rule-based templates — not a paid AI/LLM call, so this stays free forever.")
+
+                    if not laps_df.empty:
+                        st.markdown("### 📈 Race Position Progression")
+                        st.caption("Every position change across the full race, for the top finishers. Lower on the chart = better position (P1 at the top).")
+                        driver_id_to_name = {res['Driver']['driverId']: f"{res['Driver']['givenName']} {res['Driver']['familyName']}" for res in results}
+                        top_n_ids = [res['Driver']['driverId'] for res in results[:8]]
+                        chart_laps_df = laps_df[laps_df['DriverId'].isin(top_n_ids)].copy()
+                        chart_laps_df['Driver'] = chart_laps_df['DriverId'].map(driver_id_to_name)
+                        pivot_positions = chart_laps_df.pivot(index='Lap', columns='Driver', values='Position')
+                        st.line_chart(pivot_positions, use_container_width=True)
+                    else:
+                        st.info("📻 Lap-by-lap position data wasn't available for this race on the free feed — the narrative above still uses the official classification and pit stop data where available.")
+
+                    if not pitstops_df.empty:
+                        st.markdown("### 🛠️ Pit Stop Timeline")
+                        st.caption("Every recorded pit stop in the race — lap number and duration, for the top finishers.")
+                        pit_display_rows = []
+                        for _, stop in pitstops_df[pitstops_df['DriverId'].isin(top_n_ids)].sort_values(['DriverId', 'Lap']).iterrows():
+                            pit_display_rows.append({
+                                "Driver": driver_id_to_name.get(stop['DriverId'], stop['DriverId']),
+                                "Stop #": stop['Stop'], "Lap": stop['Lap'], "Duration (s)": stop['Duration']
+                            })
+                        render_data_table(pit_display_rows)
+                    else:
+                        st.info("📻 No pit stop data was available for this race on the free feed.")
+
+                    with st.expander("📋 Full Race Classification"):
+                        render_data_table(recap['results_df'][['Pos', 'Driver', 'Team', 'Grid', 'Points', 'Status']].to_dict("records"), team_col="Team")
+
+                except Exception as e:
+                    st.error(f"Race analysis error: {str(e)}")
 
 # ====================== FANTASY F1 ASSISTANT ======================
 with tabs[9]:
@@ -2414,4 +2515,4 @@ with tabs[12]:
             sub_df = pivot_df[[c for c in [team_a, team_b] if c in pivot_df.columns]]
             st.line_chart(sub_df, use_container_width=True)
 
-st.caption("F1 Pit Wall Hub • Completely Free • Powered by Public APIs (Jolpi/Ergast + OpenF1) • No API Keys Required")
+st.caption("F1 Pit Wall Hub • Completely Free • Powered by the Jolpi/Ergast Public API • No API Keys Required")
